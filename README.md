@@ -1,7 +1,7 @@
 # Landsat_SST_algorithm
 
-NLSSTpipeline produces atmospheric corrected sea surface temperatures (SST) from Landsat SST. The
-atmospheric correction is produced using an NLSST algorithm. We calculate the NLSST algorithm 
+NLSSTpipeline produces atmospheric corrected sea surface temperatures (SST) from Landsat SST. The \
+atmospheric correction is produced using an NLSST algorithm. We calculate the NLSST algorithm \
 coefficients using ECMWF ERA5 atmospheric column water vapors at ___ atmospheric levels input into  
 the MODTRAN radiative transfer model to estimate the relationship between Top of Atmosphere (TOA)   
 thermal brightness temperatures and sea surface temperatures. We use coincident MODIS water vapor
