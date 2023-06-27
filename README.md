@@ -15,5 +15,6 @@ It creates matchups between MODIS and Landsat for a region near Cosgrove, West A
 a RANSAC regression to produce a calibration equation for Landsat, which is then added in the \
 NLSST pipeline. The current calibration (20230627) is significant to the 90% confidence level (p=0.08). 
 
-Data includes sample uncalibrated SSTs produced by NLSST pipeline for input into LandsatCalibration. \
-Also includes matchup data (MODISvLandsat) that has already been created in LandsatCalibration.
+Data includes matchup data (MODISvLandsat) that has already been created in LandsatCalibration. \
+Uncalibrated SSTs produced by NLSST pipeline for input into LandsatCalibration were too big to include \
+so must run NLSSTpipeline first to be able to run LandsatCalibration.
