@@ -1,0 +1,41 @@
+name: nlsst
+
+channels:
+  - conda-forge
+
+dependencies:
+  # Base language runtimes
+  - python=3.11
+  # User environment, not strictly needed for the kernel to run
+  - jupyterlab
+  
+  # TODO: this pins an older xarray, code needs update to run w/current xarray
+  - xarray==2023.03.0
+  
+  - pygmt
+  - scikit-image
+  - gdal
+  - pystac-client
+  - pyproj
+  - pandas
+  - geopandas
+  - intake
+  - earthaccess
+  - scikit-learn
+  - ipywidgets
+  - tqdm
+  - boto3
+  - rasterio
+  - dask
+  - rioxarray
+  - cartopy
+  - scipy
+  - shapely
+  - statsmodels
+  - cycler
+  - pytest
+  - nbmake
+  - matplotlib
+  - ipympl
+  - geoviews
+  - hvplot
