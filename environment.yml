@@ -9,9 +9,7 @@ dependencies:
   # User environment, not strictly needed for the kernel to run
   - jupyterlab
   
-  # TODO: this pins an older xarray, code needs update to run w/current xarray
-  - xarray==2023.03.0
-  
+  - xarray
   - pygmt
   - scikit-image
   - gdal
