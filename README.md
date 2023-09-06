@@ -15,6 +15,10 @@ It creates matchups between MODIS and Landsat for a region near Cosgrove, West A
 a RANSAC regression to produce a calibration equation for Landsat, which is then added in the \
 NLSST pipeline. The current calibration (20230627) is significant to the 90% confidence level (p=0.08). 
 
+'ERADownload' is the code required to download all ERA-5 atmospheric profiles and sea surface temperature \
+reanalysis data for the training of the MODTRAN atmospheric correction model. `MODTRAN4_prep` prepares \
+the ERA-5 data for intake for the MODTRAN software run by the MODTRAN C script.
+
 Data includes matchup data (`MODISvLandsat`) that has already been created in `LandsatCalibration`. \
 Uncalibrated SSTs produced by `NLSSTpipeline` for input into `LandsatCalibration` were too big to include \
 so must run `NLSSTpipeline` first to be able to run `LandsatCalibration`. Data required to generate the \
