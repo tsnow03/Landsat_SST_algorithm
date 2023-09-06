@@ -27,7 +27,7 @@ in `Data/AtmCorrection`.
 
 This work is covered under an MIT license.
 
-Project contact info:
-Tasha Snow, PhD
-Colorado School of Mines
+Project contact info: \
+Tasha Snow, PhD \
+Colorado School of Mines \
 tsnow@mines.edu
