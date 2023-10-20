@@ -8,6 +8,8 @@ dependencies:
   - python=3.11
   # User environment, not strictly needed for the kernel to run
   - jupyterlab
+  # pip to install package that's only available in pip
+  - pip
   
   - xarray
   - pygmt
@@ -37,3 +39,7 @@ dependencies:
   - ipympl
   - geoviews
   - hvplot
+  - pip:
+    - pytensor
+  - pip:
+    - pymc
