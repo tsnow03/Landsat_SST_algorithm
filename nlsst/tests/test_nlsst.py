@@ -4,6 +4,10 @@ import numpy as np
 from pyproj import Proj, transform
 
 @pytest.fixture
+def ls_scene():
+    # Store a sample LScoords here
+    return <put sample LScoords in this return> 
+    
 def LScoords():
     # Store a sample LScoords here
     return <put sample LScoords in this return> 
