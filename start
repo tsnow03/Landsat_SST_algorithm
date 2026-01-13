@@ -1,0 +1,5 @@
+#!/bin/bash
+# Binder start script
+# Ensures LIBRADTRAN_DIR is set when Jupyter starts
+export LIBRADTRAN_DIR="${HOME}/libradtran"
+exec "$@"

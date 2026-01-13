@@ -64,6 +64,7 @@ from rasterio.warp import reproject
 from rasterio.warp import Resampling as resample
 import cartopy.crs as ccrs
 import cartopy
+import cartopy.feature as cfeature
 from pykrige.ok import OrdinaryKriging
 from sklearn.linear_model import LinearRegression, RANSACRegressor
 from scipy.odr import Model, RealData, ODR
@@ -81,6 +82,29 @@ from matplotlib.patches import Polygon as Pgon
 from tqdm import tqdm
 from sklearn.preprocessing import RobustScaler
 from sklearn.preprocessing import StandardScaler
+
+# --------------------------
+# RTM Backend Configuration
+# --------------------------
+# Set RTM_BACKEND to 'modtran' or 'libradtran' to select the radiative transfer model
+# for atmospheric correction. LibRadTran is an open-source alternative that doesn't
+# require a MODTRAN license.
+#
+# To use LibRadTran:
+# 1. Install LibRadTran and set LIBRADTRAN_DIR environment variable
+# 2. Run generate_libradtran_lut.py to create LUT files
+# 3. Set RTM_BACKEND = 'libradtran' below
+#
+RTM_BACKEND = 'modtran'  # Options: 'modtran', 'libradtran'
+
+def get_rtm_file_prefix(backend=None):
+    """Get the file prefix for RTM output files based on backend selection."""
+    if backend is None:
+        backend = RTM_BACKEND
+    if backend == 'libradtran':
+        return 'libradtran_atmprofiles_'
+    else:
+        return 'modtran_atmprofiles_'
 
 # + editable=true slideshow={"slide_type": ""}
 # Functions to search and open Lansat scenes
@@ -295,19 +319,23 @@ def search_stac(url, collection, gjson_outfile=None, bbox=None, timeRange=None, 
 
 ###############
 
-def get_lst_mask(lstfile):
+def get_lst_mask(lstfile, url='https://landsatlook.usgs.gov/stac-server', collection='landsat-c2l1'):
     """
     Generates an open ocean mask from a Landsat scene based on the QA band information.
 
-    This function searches for a Landsat scene using a provided filename, loads the 
-    'qa_pixel' band, applies cloud, ice, and ocean masking, and then extracts only 
-    the open ocean pixels. The output is a mask where open ocean pixels are 1, and 
+    This function searches for a Landsat scene using a provided filename, loads the
+    'qa_pixel' band, applies cloud, ice, and ocean masking, and then extracts only
+    the open ocean pixels. The output is a mask where open ocean pixels are 1, and
     all other pixels are NaN.
 
     Parameters
     ----------
     lstfile : str
         Path or name of the Landsat file used to derive the corresponding STAC search ID.
+    url : str, optional
+        URL to the STAC API. Default is USGS Landsat STAC server.
+    collection : str, optional
+        Collection name. Default is 'landsat-c2l1'.
 
     Returns
     -------
@@ -315,7 +343,7 @@ def get_lst_mask(lstfile):
         A 2D mask array where open ocean pixels are 1, and all other pixels are NaN.
     """
     filename = lstfile[:-11]
-    items = search_stac(url,collection,filename=filename)
+    items = search_stac(url, collection, filename=filename)
     
     # Open stac catalog for some needed info
     catalog = intake.open_stac_item_collection(items)
@@ -1518,7 +1546,7 @@ def get_sst(ls_scene,mod07,spacing,param):
         lat, lon = mod07.Latitude, mod07.Longitude    
 
     # Produce indicies for aligning MODIS pixel subset to match Landsat image at 4000m (or 300)resolution
-    indiciesMOD,lines,samples = MODISslookup(mod07,ls_scene,box,spacing)
+    indiciesMOD,lines,samples = MODISsstlookup(mod07,ls_scene,box,spacing)
 
     # Align MODIS SST to Landsat on slightly upsampled grid # have the option to output `uniqImgWV` if want to know range of data
     dataOutWV_xr = alignMODIS(data,lat,lon,param,indiciesMOD,lines,samples,mod07,ls_scene,spacing)
@@ -1934,7 +1962,7 @@ def alignMODIS(data,lat,lon,param,indiciesMOD,lines,samples,mod07,ls_scene,spaci
     xsl1, ysl1 = transformer_test.transform(xs1, ys1)
     for i,n in enumerate(xsl1):
         if np.linalg.norm(np.array([xsl1[i], ysl1[i]]) - [xx[i],yy[i]]) > test_threshold:
-            print(f"Round-trip transformation error for {sceneid}, {np.linalg.norm(np.array([xsl1[i], ysl1[i]]) - xx[i],yy[i])}")
+            print(f"Round-trip transformation error: {np.linalg.norm(np.array([xsl1[i], ysl1[i]]) - [xx[i],yy[i]])}")
     
     # Spacing to create x and y parameters at the correct spacing
     redy = int(abs(spacing[0]/30))
@@ -1952,15 +1980,15 @@ def alignMODIS(data,lat,lon,param,indiciesMOD,lines,samples,mod07,ls_scene,spaci
 
     #From LandsatCalib
     # Set up coarser sampling grid to match spacing and check to make sure is in the same orientation as the original Landsat grid
-    xgrid = ls_scene.x.values[0::red_x]
+    xgrid = ls_scene.x.values[0::redx]
     if len(xgrid)==1:
-        xgrid = ls_scene.x.values[0::-red_x]
+        xgrid = ls_scene.x.values[0::-redx]
     if xgrid[0]!=ls_scene.x.values[0]:
         xgrid = np.flip(xgrid)
         print ('Align x flip')
-    ygrid = ls_scene.y.values[0::red_y]
+    ygrid = ls_scene.y.values[0::redy]
     if len(ygrid)==1:
-        ygrid = ls_scene.y.values[0::-red_y]
+        ygrid = ls_scene.y.values[0::-redy]
     if ygrid[0]!=ls_scene.y.values[0]:
         ygrid = np.flip(ygrid)
         print ('Align y flip')
@@ -2097,21 +2125,40 @@ def prep_retrieval(atmpath,prefix,spec_hu_file):
 
 ##########################
 
-def concat_modtran_months(months,atmpath):
+def concat_modtran_months(months, atmpath, rtm_backend=None):
+    """
+    Load and concatenate RTM outputs for multiple months.
+
+    Parameters
+    ----------
+    months : list of str
+        List of month strings (e.g., ['01', '02', '03'])
+    atmpath : Path
+        Path to AtmCorrection data directory
+    rtm_backend : str, optional
+        RTM backend to use ('modtran' or 'libradtran').
+        If None, uses the global RTM_BACKEND setting.
+    """
     # Create a list to store the DataFrame for each month in the window.
     modtran_list = []
 
     n = 0
-    
+
+    # Get file prefix based on backend
+    file_prefix = get_rtm_file_prefix(rtm_backend)
+
     for mo in months:
-        TCWV_input_file = atmpath / f"TCWV_{mo}.csv"
+        # Use backend-specific TCWV cache file
+        backend_suffix = '' if (rtm_backend is None or rtm_backend == 'modtran') else f'_{rtm_backend}'
+        TCWV_input_file = atmpath / f"TCWV_{mo}{backend_suffix}.csv"
+
         if os.path.isfile(TCWV_input_file):
             # print(f"  Month {mo}: retrieval input exists")
             modtran = pd.read_csv(TCWV_input_file)
         else:
-            spec_hu_file = f"modtran_atmprofiles_{mo}.txt"
-            modtran_output_file = f"modtran_atmprofiles_{mo}.bts+tau+dbtdsst.txt"
-            modtran = prep_retrieval(atmpath, modtran_output_file, spec_hu_file)
+            spec_hu_file = f"modtran_atmprofiles_{mo}.txt"  # Input profiles are always the same
+            rtm_output_file = f"{file_prefix}{mo}.bts+tau+dbtdsst.txt"
+            modtran = prep_retrieval(atmpath, rtm_output_file, spec_hu_file)
             modtran.to_csv(TCWV_input_file, index=False)
         
         # Remove rows with Surface T values of 271.46 and 271.461.
@@ -2129,21 +2176,33 @@ def concat_modtran_months(months,atmpath):
 
 ##########################
 
-def derive_coeffs(atmpath,simTOA_transformer,simWV_transformer,simT_transformer):
-    # Derive retrieval coefficiencts from MODTRAN files - 3 month rolling window
+def derive_coeffs(atmpath, simTOA_transformer, simWV_transformer, simT_transformer, rtm_backend=None):
+    """
+    Derive retrieval coefficients from RTM files using 3-month rolling window.
+
+    Parameters
+    ----------
+    atmpath : Path
+        Path to AtmCorrection data directory
+    simTOA_transformer, simWV_transformer, simT_transformer : sklearn transformers
+        Transformers for normalizing TOA, water vapor, and surface temperature
+    rtm_backend : str, optional
+        RTM backend to use ('modtran' or 'libradtran').
+        If None, uses the global RTM_BACKEND setting.
+    """
     months = ['01','02','03','04','05','06','07','08','09','10','11','12']
     atmcor = {}  # To store the regression results for each middle month.
-    
+
     # Loop over months by index so we can get the previous and next month via modulo arithmetic.
     for i, middle_month in enumerate(months):
         # Determine the rolling window months: previous, current, and next (with wrap-around)
         prev_month = months[(i - 1) % 12]
         next_month = months[(i + 1) % 12]
         window_months = [prev_month, middle_month, next_month]
-        
+
         print(f"Processing rolling window for middle month {middle_month}")
-        
-        modtran_lut,_ = concat_modtran_months(window_months,atmpath)
+
+        modtran_lut, _ = concat_modtran_months(window_months, atmpath, rtm_backend=rtm_backend)
     
         modtran_lut_norm = modtran_lut
     
@@ -2524,6 +2583,6 @@ def apply_retrieval(ls_thermal,scene,mask,WV_xr,atmcor,simT_transformer,simTOA_t
 
         return SST
         
-    except Exception as e: 
+    except Exception as e:
         print(e)
-        print (f'atm correction of {ls_scene.id.values} failed')
+        print (f'atm correction of {scene.id} failed')

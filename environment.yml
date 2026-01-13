@@ -4,13 +4,12 @@ channels:
   - conda-forge
 
 dependencies:
-  # Base language runtimes
-  - python=3.11
+  - python>=3.10,<3.13
   # User environment, not strictly needed for the kernel to run
   - jupyterlab
   # pip to install package that's only available in pip
   - pip
-  
+
   - xarray
   - pygmt
   - scikit-image
@@ -39,7 +38,15 @@ dependencies:
   - ipympl
   - geoviews
   - hvplot
+
+  # LibRadTran build dependencies
+  - gsl
+  - netcdf4
+  - c-compiler
+  - fortran-compiler
+  - make
+  - wget
+
   - pip:
     - pytensor
-  - pip:
     - pymc
