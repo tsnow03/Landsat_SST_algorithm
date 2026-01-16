@@ -1,14 +1,24 @@
-#!/usr/bin/env python
-# coding: utf-8
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: light
+#       format_version: '1.5'
+#       jupytext_version: 1.16.7
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
 
 # # Landsat SST utility functions
 # Author: Tasha Snow
 
-# Note: After making changes to the `.ipynb` version of SSTutils, got to Terminal, `jupyter nbconvert --to script SSTutils.ipynb`,  make executable in terminal with `chmod +x SSTutils.py`, and rerun `imports` cell.
+# Note: After making changes to the `.ipynb` version of SSTutils, `File > Save notebook as`, 
+# change extension to `.py`, make executable in terminal with `chmod +x SSTutils.py`, and rerun `imports` cell.
 
-# In[ ]:
-
-
+# +
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
@@ -72,10 +82,7 @@ from tqdm import tqdm
 from sklearn.preprocessing import RobustScaler
 from sklearn.preprocessing import StandardScaler
 
-
-# In[26]:
-
-
+# + editable=true slideshow={"slide_type": ""}
 # Functions to search and open Lansat scenes
 '''
 Functions to search, open, and analyze Landsat scenes.
@@ -393,99 +400,6 @@ def subset_img(da,polarx,polary):
 
 ##########################
 
-# def lsat_reproj(old_cs,new_cs,lbox):
-#     '''
-#     Reprojects a bounding box from an old coordinate system to a new one, and checks
-#     for round-trip transformation errors. The resulting bounding box coordinate order
-#     may be flipped if the input coordinates indicate an inverted orientation. 
-#     Diagnostic information is printed, and the transformed bounding box is returned.
-
-#     Parameters
-#     ----------
-#     old_cs : str
-#         The Proj4 or EPSG string for the original (source) coordinate system.
-#         For example: 'epsg:4326' or '+proj=longlat +datum=WGS84 +no_defs'.
-#     new_cs : str
-#         The Proj4 or EPSG string for the target coordinate system.
-#     lbox : list or tuple of float
-#         A bounding box specified as [ULX, LRY, LRX, ULY] in the old coordinate system.
-#         - ULX: Upper Left X
-#         - LRY: Lower Right Y
-#         - LRX: Lower Right X
-#         - ULY: Upper Left Y
-
-#     Returns
-#     -------
-#     bbox : list of tuples
-#         The transformed bounding box in the new coordinate system. The point order
-#         depends on whether the original bounding box was flipped or not:
-#         - Flipped orientation: [(lULX, lLLY), (lLLX, lULY), (lLRX, lURY), (lURX, lLRY)]
-#         - Normal orientation:  [(lULX, lULY), (lLLX, lLLY), (lLRX, lLRY), (lURX, lURY)]
-#     checkbox : numpy.ndarray
-#         An array of the round-trip check coordinates in the old coordinate system
-#         after transforming back from the new coordinate system. Used to verify
-#         the accuracy of the transformation.
-
-#     Notes
-#     -----
-#     - A threshold of 0.5 (`test_threshold`) is used to check whether the
-#       round-trip transformation error is too high. If the Euclidean distance
-#       between the original coordinates and the transformed-back coordinates
-#       exceeds this threshold, a warning is printed.
-#     - The function prints diagnostic messages, including orientation checks
-#       and the final bounding box. If the original bounding box was inverted
-#       (LRY > ULY), a 'flipped orientation' message is displayed, and the points
-#       are reordered accordingly.
-#     - The function has not been extensively tested with grids that are rotated
-#       or otherwise do not follow the normal bounding-box assumptions.
-
-#     Examples
-#     --------
-#     >>> old_cs = 'epsg:4326'
-#     >>> new_cs = 'epsg:3031'
-#     >>> lbox = [-60, -85, 30, -70]  # [ULX, LRY, LRX, ULY]
-#     >>> bbox, checkbox = lsat_reproj(old_cs, new_cs, lbox)
-#     >>> bbox
-#     [(-6671686.551, 241102.289), ... ]  # Example coordinates
-#     >>> checkbox
-#     array([-60.3, -70.1,  30.2, -84.9]) # Round-trip result
-
-#     bbox comes out with the points out of order for making a polygon though pairs are correct. Order is 0,3,1,2 when done in normal projection. 
-#     Haven't tested for flipped grid.
-#     '''
-    
-#     test_threshold = 0.5
-    
-#     # Create a transform object to convert between coordinate systems
-#     inProj = Proj(init=old_cs)
-#     outProj = Proj(init=new_cs)
-    
-#     ULX,LRY,LRX,ULY = lbox
-
-#     [lULX,lLRX], [lULY,lLRY] =  transform(inProj,outProj,[ULX,LRX], [ULY,LRY], always_xy=True)
-#     [cULX,cLRX], [cULY,cLRY] =  transform(outProj,inProj,[lULX,lLRX], [lULY,lLRY], always_xy=True)
-#     [lLLX,lURX], [lLLY,lURY] =  transform(inProj,outProj,[ULX,LRX], [LRY,ULY], always_xy=True)
-#     [cLLX,cURX], [cLLY,cURY] =  transform(outProj,inProj,[lLLX,lURX], [lLLY,lURY], always_xy=True)
-
-#     if LRY>ULY:
-#         bbox = [(lULX,lLLY),(lLLX,lULY),(lLRX,lURY),(lURX,lLRY)]
-#         # print('lsat_reproj flipped orientation')
-#     else:
-#         bbox = [(lULX,lULY),(lLLX,lLLY),(lLRX,lLRY),(lURX,lURY)]
-#         # print('lsat_reproj normal orientation')
-
-#     checkbox = np.array([cULX,cULY,cLRX,cLRY])
-#     if np.linalg.norm(checkbox - np.array([ULX,ULY,LRX,LRY])) > test_threshold:
-#         print(f"Round-trip transformation error 1 of {np.linalg.norm(checkbox - np.array([ULX,ULY,LRX,LRY]))}")
-#     checkbox = np.array([cLLX,cLLY,cURX,cURY])
-#     if np.linalg.norm(checkbox - np.array([ULX,LRY,LRX,ULY])) > test_threshold:
-#         print(f"Round-trip transformation error 2 of {np.linalg.norm(checkbox - np.array([ULX,LRY,LRX,ULY]))}")
-#     # print (f'bbox={bbox}')
-#     # print (f'lbox={lbox}')
-#     # print (f'checkbox={checkbox}')
-    
-#     return bbox,checkbox
-
 def lsat_reproj(old_cs,new_cs,lbox):
     '''
     Reprojects a bounding box from an old coordinate system to a new one, and checks
@@ -497,17 +411,54 @@ def lsat_reproj(old_cs,new_cs,lbox):
     ----------
     old_cs : str
         The Proj4 or EPSG string for the original (source) coordinate system.
+        For example: 'epsg:4326' or '+proj=longlat +datum=WGS84 +no_defs'.
     new_cs : str
         The Proj4 or EPSG string for the target coordinate system.
     lbox : list or tuple of float
         A bounding box specified as [ULX, LRY, LRX, ULY] in the old coordinate system.
+        - ULX: Upper Left X
+        - LRY: Lower Right Y
+        - LRX: Lower Right X
+        - ULY: Upper Left Y
 
     Returns
     -------
     bbox : list of tuples
-        The transformed bounding box in the new coordinate system.
+        The transformed bounding box in the new coordinate system. The point order
+        depends on whether the original bounding box was flipped or not:
+        - Flipped orientation: [(lULX, lLLY), (lLLX, lULY), (lLRX, lURY), (lURX, lLRY)]
+        - Normal orientation:  [(lULX, lULY), (lLLX, lLLY), (lLRX, lLRY), (lURX, lURY)]
     checkbox : numpy.ndarray
-        An array of the round-trip check coordinates.
+        An array of the round-trip check coordinates in the old coordinate system
+        after transforming back from the new coordinate system. Used to verify
+        the accuracy of the transformation.
+
+    Notes
+    -----
+    - A threshold of 0.5 (`test_threshold`) is used to check whether the
+      round-trip transformation error is too high. If the Euclidean distance
+      between the original coordinates and the transformed-back coordinates
+      exceeds this threshold, a warning is printed.
+    - The function prints diagnostic messages, including orientation checks
+      and the final bounding box. If the original bounding box was inverted
+      (LRY > ULY), a 'flipped orientation' message is displayed, and the points
+      are reordered accordingly.
+    - The function has not been extensively tested with grids that are rotated
+      or otherwise do not follow the normal bounding-box assumptions.
+
+    Examples
+    --------
+    >>> old_cs = 'epsg:4326'
+    >>> new_cs = 'epsg:3031'
+    >>> lbox = [-60, -85, 30, -70]  # [ULX, LRY, LRX, ULY]
+    >>> bbox, checkbox = lsat_reproj(old_cs, new_cs, lbox)
+    >>> bbox
+    [(-6671686.551, 241102.289), ... ]  # Example coordinates
+    >>> checkbox
+    array([-60.3, -70.1,  30.2, -84.9]) # Round-trip result
+
+    bbox comes out with the points out of order for making a polygon though pairs are correct. Order is 0,3,1,2 when done in normal projection. 
+    Haven't tested for flipped grid.
     '''
     
     test_threshold = 0.5
@@ -517,9 +468,6 @@ def lsat_reproj(old_cs,new_cs,lbox):
     outProj = Proj(init=new_cs)
     
     ULX,LRY,LRX,ULY = lbox
-    
-    # Check if bounding box likely crosses or is near the IDL
-    crosses_idl = abs(ULX - LRX) > 180 or abs(ULX) > 170 or abs(LRX) > 170
 
     [lULX,lLRX], [lULY,lLRY] =  transform(inProj,outProj,[ULX,LRX], [ULY,LRY], always_xy=True)
     [cULX,cLRX], [cULY,cLRY] =  transform(outProj,inProj,[lULX,lLRX], [lULY,lLRY], always_xy=True)
@@ -528,16 +476,20 @@ def lsat_reproj(old_cs,new_cs,lbox):
 
     if LRY>ULY:
         bbox = [(lULX,lLLY),(lLLX,lULY),(lLRX,lURY),(lURX,lLRY)]
+        # print('lsat_reproj flipped orientation')
     else:
         bbox = [(lULX,lULY),(lLLX,lLLY),(lLRX,lLRY),(lURX,lURY)]
+        # print('lsat_reproj normal orientation')
 
     checkbox = np.array([cULX,cULY,cLRX,cLRY])
-    if not crosses_idl and np.linalg.norm(checkbox - np.array([ULX,ULY,LRX,LRY])) > test_threshold:
+    if np.linalg.norm(checkbox - np.array([ULX,ULY,LRX,LRY])) > test_threshold:
         print(f"Round-trip transformation error 1 of {np.linalg.norm(checkbox - np.array([ULX,ULY,LRX,LRY]))}")
-    
     checkbox = np.array([cLLX,cLLY,cURX,cURY])
-    if not crosses_idl and np.linalg.norm(checkbox - np.array([ULX,LRY,LRX,ULY])) > test_threshold:
+    if np.linalg.norm(checkbox - np.array([ULX,LRY,LRX,ULY])) > test_threshold:
         print(f"Round-trip transformation error 2 of {np.linalg.norm(checkbox - np.array([ULX,LRY,LRX,ULY]))}")
+    # print (f'bbox={bbox}')
+    # print (f'lbox={lbox}')
+    # print (f'checkbox={checkbox}')
     
     return bbox,checkbox
 
@@ -627,7 +579,7 @@ def km_to_decimal_degrees(km, latitude, direction='latitude'):
 
 def crosses_idl(coords):
     '''
-    Determine if the set of coordinates crosses the International Dateline
+    Determine if the set of coordinates crosses the International Dateline in a way that will mess up the creation of a polygon
     
     Variables:
     coords = list of lon, lat tuples
@@ -640,75 +592,6 @@ def crosses_idl(coords):
         if abs(lon1 - lon2) >= 180:
             return True
     return False
-
-##########################
-
-def split_polygon_at_idl(coords):
-    '''
-    Split a polygon that crosses the IDL into two polygons
-    
-    Variables:
-    coords = list of lon, lat tuples
-    
-    Output:
-    Two Polygon objects (western and eastern hemispheres)
-    '''
-    from shapely.geometry import Polygon, MultiPolygon
-    
-    # Shift all longitudes to 0-360 range
-    shifted_coords = [(lon + 360 if lon < 0 else lon, lat) for lon, lat in coords]
-    
-    try:
-        shifted_poly = Polygon(shifted_coords)
-        return shifted_poly, None
-    except:
-        return None, None
-
-##########################
-    
-def check_overlap_with_idl_handling(lsatpoly, modis_coords):
-    '''
-    Check overlap between Landsat and MODIS polygons, handling IDL crossing
-    
-    Variables:
-    lsatpoly = Shapely Polygon for Landsat scene
-    modis_coords = list of lon, lat tuples for MODIS granule
-    
-    Output:
-    percent_dif = fraction of Landsat polygon not covered by MODIS
-    '''
-    
-    # Check if MODIS polygon crosses IDL
-    if crosses_idl(modis_coords):
-        # Try shifted coordinate system (0-360)
-        shifted_modis = [(lon + 360 if lon < 0 else lon, lat) for lon, lat in modis_coords]
-        
-        # Get Landsat bounds
-        lsat_bounds = lsatpoly.bounds  # (minx, miny, maxx, maxy)
-        
-        # Check if Landsat is near IDL
-        if lsat_bounds[0] < -170 or lsat_bounds[2] > 170:
-            # Shift Landsat polygon too
-            lsat_coords = list(lsatpoly.exterior.coords)
-            shifted_lsat = [(lon + 360 if lon < 0 else lon, lat) for lon, lat in lsat_coords]
-            try:
-                shifted_lsatpoly = Polygon(shifted_lsat)
-                shifted_modis_poly = Polygon(shifted_modis)
-                percent_dif = shifted_lsatpoly.difference(shifted_modis_poly).area / shifted_lsatpoly.area
-                return percent_dif
-            except:
-                return 1.0  # Failed to create polygons
-        else:
-            # Landsat not near IDL, so this shouldn't match
-            return 1.0
-    else:
-        # Normal case - no IDL crossing
-        try:
-            pgon = Polygon(modis_coords)
-            percent_dif = lsatpoly.difference(pgon).area / lsatpoly.area
-            return percent_dif
-        except:
-            return 1.0
 
 ##########################
 
@@ -773,9 +656,7 @@ def add_time_dim(ds):
     return ds.assign_coords(time=times,ID=idee)
 
 
-# In[39]:
-
-
+# +
 # Atmospheric correction and production of SST
 '''
 Functions to find the matching MODIS water vapor image for atmospheric correction and production of SST.
@@ -1304,110 +1185,7 @@ aligns and subsets the modis image grid to landsat using MODISlookup and subsamp
 onto the Landsat grid using uniqueMODIS
 '''
 
-# def open_MODIS(ls_scene,scene,modout_path):
-#     '''
-#     Search MOD/MDY07 atmospheric data and open water vapor for data collected closest in time to 
-#     Landsat scene.
-    
-#     Input:
-#     ls_scene = xarray dataset with Landsat scene
-#     modout_path = directory path for MODIS data
-#     scene = STAC catalog item
-    
-#     Output:
-#     mod07 = xarray dataset with MODIS (MOD/MDY07) water vapor 
-#     modfilenm = MODIS filename for image used in atm correction
-#     '''
-
-#     # Get spatial extent of Landsat scene in lat/lon
-#     mbbox = (scene.metadata['bbox'][0], scene.metadata['bbox'][1], scene.metadata['bbox'][2], scene.metadata['bbox'][3]) #(west, south, east, north) 
-#     lsatpoly = Polygon([(mbbox[0],mbbox[1]),(mbbox[0],mbbox[3]),(mbbox[2],mbbox[3]),(mbbox[2],mbbox[1]),(mbbox[0],mbbox[1])]) # ensure full lineup between landsat and modis
-
-#     ls_time = pd.to_datetime(ls_scene.time.values)
-#     calc_dt = datetime.strptime(ls_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
-#     start_dt = (calc_dt + timedelta(days=-0.5)).strftime('%Y-%m-%d %H:%M:%S')
-#     end_dt = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
-
-#     print(f'{start_dt},{end_dt},{mbbox}')
-#     # Gather all files from search location from Terra and Aqua for the same day as the Landsat image
-#     results = earthaccess.search_data(
-#         short_name='MOD07_L2',
-#         bounding_box=mbbox,
-#         # Day of a landsat scene to day after - searches day of only
-#         temporal=(start_dt,end_dt)
-#     )
-#     results2 = earthaccess.search_data(
-#         short_name='MYD07_L2',
-#         bounding_box=mbbox,
-#         # Day of a landsat scene to day after - searches day of only
-#         temporal=(start_dt,end_dt)
-#     )
-#     results = results + results2
-#     print (f'{len(results)} TOTAL granules')
-
-#     # Accept only granules that overlap at least 100% with Landsat (percent_dif<0.1 is the other option)
-#     best_grans = []
-#     for granule in results:
-#         try:
-#             granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons']
-#         except Exception as error:
-#             print(error)
-#             continue
-#         for num in range(len(granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'])):
-#             try:
-#                 map_points = [(xi['Longitude'],xi['Latitude']) for xi in granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
-#                 pgon = Polygon(map_points)
-#                 percent_dif = lsatpoly.difference(pgon).area/lsatpoly.area
-#                 if percent_dif == 0.0:
-#                     if crosses_idl(map_points):
-#                         print (f'A granule has a problematic polygon that likely crosses the International DateLine')
-#                     else:
-#                         best_grans.append(granule)
-#                         continue
-#             except Exception as error:
-#                 print(error)
-#                 # Would love to raise an exception for a valueerror except for GEOSError but not sure how 
-#     print(f'{len(best_grans)} TOTAL granules w overlap')
-
-#     # Find MODIS image closest in time to the Landsat image
-#     Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) for granule in best_grans]
-#     ind = Mdates.index(min( Mdates, key=lambda x: abs(x - pytz.utc.localize(pd.to_datetime(ls_time)))))
-#     print(f'Time difference between MODIS and Landsat: {abs(Mdates[ind] - pytz.utc.localize(pd.to_datetime(ls_time)))}')
-
-#     # Download MODIS data if needed
-
-#     # # This doesn't work because xarray can't open legacy HDF EOS data formats
-#     # mod07 = xr.open_mfdataset(earthaccess.open(results))
-
-#     # Use these access pathways while S3 streaming is not working
-#     data_links = [granule.data_links(access="external") for granule in best_grans[ind:ind+1]]
-#     netcdf_list = [g._filter_related_links("USE SERVICE API")[0].replace(".html", ".nc4") for g in best_grans[ind:ind+1]]
-#     # This is going to be slow as we are asking Opendap to format HDF into NetCDF4 so we only processing 3 granules
-#     # and Opendap is very prone to failures due concurrent connections, not ideal.
-#     file_handlers = earthaccess.download(netcdf_list,modout_path,provider='NSIDC')
-
-#     # Open MODIS data
-#     mod_list = os.listdir(modout_path)
-#     mod_list = [file for file in mod_list if file[-3:]=='nc4']
-#     # print(mod_list)
-#     modfilenm = mod_list[0]
-    
-#     os.rename(f'{modout_path}/{modfilenm}', f'{modout_path}/{modfilenm}.gz')
-#     with gzip.open(f'{modout_path}/{modfilenm}.gz', 'rb') as f_in:
-#         with open(f'{modout_path}/{modfilenm}', 'wb') as f_out:
-#             f_out.write(f_in.read())
-
-#     mod07 = xr.open_dataset(f'{modout_path}/{modfilenm}')
-#     mod07 = mod07.rio.write_crs('epsg:4326')
-
-#     # Delete MODIS file
-#     os.remove(f'{modout_path}/{modfilenm}')
-#     os.remove(f'{modout_path}/{modfilenm}.gz')
-    
-#     return mod07,modfilenm
-
-# Then modify your open_MODIS function:
-def open_MODIS(ls_scene, scene, modout_path):
+def open_MODIS(ls_scene,scene,modout_path):
     '''
     Search MOD/MDY07 atmospheric data and open water vapor for data collected closest in time to 
     Landsat scene.
@@ -1423,10 +1201,8 @@ def open_MODIS(ls_scene, scene, modout_path):
     '''
 
     # Get spatial extent of Landsat scene in lat/lon
-    mbbox = (scene.metadata['bbox'][0], scene.metadata['bbox'][1], 
-             scene.metadata['bbox'][2], scene.metadata['bbox'][3])
-    lsatpoly = Polygon([(mbbox[0],mbbox[1]),(mbbox[0],mbbox[3]),
-                        (mbbox[2],mbbox[3]),(mbbox[2],mbbox[1]),(mbbox[0],mbbox[1])])
+    mbbox = (scene.metadata['bbox'][0], scene.metadata['bbox'][1], scene.metadata['bbox'][2], scene.metadata['bbox'][3]) #(west, south, east, north) 
+    lsatpoly = Polygon([(mbbox[0],mbbox[1]),(mbbox[0],mbbox[3]),(mbbox[2],mbbox[3]),(mbbox[2],mbbox[1]),(mbbox[0],mbbox[1])]) # ensure full lineup between landsat and modis
 
     ls_time = pd.to_datetime(ls_scene.time.values)
     calc_dt = datetime.strptime(ls_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
@@ -1434,22 +1210,23 @@ def open_MODIS(ls_scene, scene, modout_path):
     end_dt = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
 
     print(f'{start_dt},{end_dt},{mbbox}')
-    
-    # Gather all files from search location from Terra and Aqua
+    # Gather all files from search location from Terra and Aqua for the same day as the Landsat image
     results = earthaccess.search_data(
         short_name='MOD07_L2',
         bounding_box=mbbox,
+        # Day of a landsat scene to day after - searches day of only
         temporal=(start_dt,end_dt)
     )
     results2 = earthaccess.search_data(
         short_name='MYD07_L2',
         bounding_box=mbbox,
+        # Day of a landsat scene to day after - searches day of only
         temporal=(start_dt,end_dt)
     )
     results = results + results2
-    print(f'{len(results)} TOTAL granules')
+    print (f'{len(results)} TOTAL granules')
 
-    # Accept only granules that overlap at least 100% with Landsat
+    # Accept only granules that overlap at least 100% with Landsat (percent_dif<0.1 is the other option)
     best_grans = []
     for granule in results:
         try:
@@ -1457,41 +1234,43 @@ def open_MODIS(ls_scene, scene, modout_path):
         except Exception as error:
             print(error)
             continue
-            
         for num in range(len(granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'])):
             try:
-                map_points = [(xi['Longitude'],xi['Latitude']) for xi in 
-                             granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
-                
-                # Use new function that handles IDL
-                percent_dif = check_overlap_with_idl_handling(lsatpoly, map_points)
-                
+                map_points = [(xi['Longitude'],xi['Latitude']) for xi in granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
+                pgon = Polygon(map_points)
+                percent_dif = lsatpoly.difference(pgon).area/lsatpoly.area
                 if percent_dif == 0.0:
-                    best_grans.append(granule)
                     if crosses_idl(map_points):
-                        print(f'Added granule that crosses IDL')
-                    continue
-                    
+                        print (f'A granule has a problematic polygon that likely crosses the International DateLine')
+                    else:
+                        best_grans.append(granule)
+                        continue
             except Exception as error:
-                print(f'Error processing granule polygon: {error}')
-                
+                print(error)
+                # Would love to raise an exception for a valueerror except for GEOSError but not sure how 
     print(f'{len(best_grans)} TOTAL granules w overlap')
 
     # Find MODIS image closest in time to the Landsat image
-    Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) 
-              for granule in best_grans]
-    ind = Mdates.index(min(Mdates, key=lambda x: abs(x - pytz.utc.localize(pd.to_datetime(ls_time)))))
+    Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) for granule in best_grans]
+    ind = Mdates.index(min( Mdates, key=lambda x: abs(x - pytz.utc.localize(pd.to_datetime(ls_time)))))
     print(f'Time difference between MODIS and Landsat: {abs(Mdates[ind] - pytz.utc.localize(pd.to_datetime(ls_time)))}')
 
-    # Download MODIS data
+    # Download MODIS data if needed
+
+    # # This doesn't work because xarray can't open legacy HDF EOS data formats
+    # mod07 = xr.open_mfdataset(earthaccess.open(results))
+
+    # Use these access pathways while S3 streaming is not working
     data_links = [granule.data_links(access="external") for granule in best_grans[ind:ind+1]]
-    netcdf_list = [g._filter_related_links("USE SERVICE API")[0].replace(".html", ".nc4") 
-                   for g in best_grans[ind:ind+1]]
-    file_handlers = earthaccess.download(netcdf_list, modout_path, provider='NSIDC')
+    netcdf_list = [g._filter_related_links("USE SERVICE API")[0].replace(".html", ".nc4") for g in best_grans[ind:ind+1]]
+    # This is going to be slow as we are asking Opendap to format HDF into NetCDF4 so we only processing 3 granules
+    # and Opendap is very prone to failures due concurrent connections, not ideal.
+    file_handlers = earthaccess.download(netcdf_list,modout_path,provider='NSIDC')
 
     # Open MODIS data
     mod_list = os.listdir(modout_path)
     mod_list = [file for file in mod_list if file[-3:]=='nc4']
+    # print(mod_list)
     modfilenm = mod_list[0]
     
     os.rename(f'{modout_path}/{modfilenm}', f'{modout_path}/{modfilenm}.gz')
@@ -1506,7 +1285,7 @@ def open_MODIS(ls_scene, scene, modout_path):
     os.remove(f'{modout_path}/{modfilenm}')
     os.remove(f'{modout_path}/{modfilenm}.gz')
     
-    return mod07, modfilenm
+    return mod07,modfilenm
 
 ##########################
     
@@ -2244,9 +2023,7 @@ def uniqueMODIS(data,param,indiciesMOD,lines,samples):
     return dataOut,uniq # Can also output MODimg and inverse and counts if desired
 
 
-# In[28]:
-
-
+# +
 # Functions for deriving SST retrieval coefficients
 '''
 These functions help to derive the SST monthly correction coefficients
@@ -2589,9 +2366,7 @@ def spec_hu_to_tcwv(modtran_lut, modtran_atm, atm_levels=37):
     return modtran_lut
 
 
-# In[29]:
-
-
+# +
 # Functions to produce SST with atmospheric correction
 '''
 Functions to produce SST with atmospheric correction
@@ -2753,4 +2528,3 @@ def apply_retrieval(ls_thermal,scene,mask,WV_xr,atmcor,simT_transformer,simTOA_t
     except Exception as e: 
         print(e)
         print (f'atm correction of {ls_scene.id.values} failed')
-
