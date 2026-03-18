@@ -540,7 +540,65 @@ def lsat_reproj(old_cs,new_cs,lbox):
         print(f"Round-trip transformation error 2 of {np.linalg.norm(checkbox - np.array([ULX,LRY,LRX,ULY]))}")
     
     return bbox,checkbox
+        
+##########################
 
+def sub_to_point(row, lat_nm, lon_nm, dist, source_crs, target_crs, SST_calibrated):
+    # Create search area around THIS specific seal point (in lat/lon)
+    ilat = row[lat_nm]
+    ilon = row[lon_nm]
+    lat_add = km_to_decimal_degrees(dist, ilat, direction='latitude')
+    lon_add = km_to_decimal_degrees(dist, ilat, direction='longitude')
+    
+    # Create bounding box in lat/lon
+    bboxV = (ilon-lon_add, ilat-lat_add, ilon+lon_add, ilat+lat_add)
+    
+    # Reproject bounding box to EPSG:3031
+    sbox, checkbox = lsat_reproj(source_crs, target_crs, 
+                                      (bboxV[0], bboxV[1], bboxV[2], bboxV[3]))
+    
+    # Create polygon for cropping
+    polygon = Polygon([
+        (sbox[0][0], sbox[0][1]), 
+        (sbox[3][0], sbox[3][1]), 
+        (sbox[2][0], sbox[2][1]), 
+        (sbox[1][0], sbox[1][1]),
+        (sbox[0][0], sbox[0][1])  
+    ])
+    
+    # Get min/max boundaries
+    minx, miny, maxx, maxy = polygon.bounds
+    polarx = [minx, maxx]
+    polary = [miny, maxy]
+    
+    # Subset to the small area around this seal point
+    SST_sub = subset_img(SST_calibrated, polarx, polary)
+    
+    # Crop to exact polygon
+    SST_sub = crop_xarray_dataarray_with_polygon(SST_sub, polygon)
+    
+    # Now compute statistics for THIS specific area
+    lsat = np.around(np.nanmean(SST_sub), 2)
+    lstd = np.around(np.nanstd(SST_sub), 2)
+
+    return lsat, lstd, SST_sub
+        
+##########################
+
+def center_pix(SST_sub, x_pt, y_pt):
+    # Get center pixel value
+    center_val = SST_sub.sel(x=x_pt, y=y_pt, method="nearest")
+    
+    # Extract the x/y coordinate values as plain floats
+    center_x = float(center_val.x.values)
+    center_y = float(center_val.y.values)
+    
+    # Extract the actual value
+    if isinstance(center_val, xr.Dataset):
+        center_value = float(center_val['band_data'].values.item())
+    else:
+        center_value = float(center_val.values.item())
+        
 ##########################
 
 def crop_xarray_dataarray_with_polygon(dataarray, polygon):
@@ -1406,11 +1464,295 @@ onto the Landsat grid using uniqueMODIS
     
 #     return mod07,modfilenm
 
-# Then modify your open_MODIS function:
+#### Most recent open_MODIS function:
+    
+# def open_MODIS(ls_scene, scene, modout_path):
+#     '''
+#     Search MOD/MDY07 atmospheric data and open water vapor for data collected closest in time to 
+#     Landsat scene.
+    
+#     Input:
+#     ls_scene = xarray dataset with Landsat scene
+#     modout_path = directory path for MODIS data
+#     scene = STAC catalog item
+    
+#     Output:
+#     mod07 = xarray dataset with MODIS (MOD/MDY07) water vapor 
+#     modfilenm = MODIS filename for image used in atm correction
+#     '''
+
+#     # Get spatial extent of Landsat scene in lat/lon
+#     mbbox = (scene.metadata['bbox'][0], scene.metadata['bbox'][1], 
+#              scene.metadata['bbox'][2], scene.metadata['bbox'][3])
+#     print(mbbox, 1)
+#     mbbox = scene.metadata['bbox']
+#     print(mbbox, 2)
+#     if mbbox[0] > mbbox[2]:  # west > east = IDL crossing
+#         mbbox = normalize_bbox_for_idl(mbbox)
+#         print(f"Normalized IDL-crossing bbox to: {mbbox}")
+        
+#     lsatpoly = Polygon([(mbbox[0],mbbox[1]),(mbbox[0],mbbox[3]),
+#                         (mbbox[2],mbbox[3]),(mbbox[2],mbbox[1]),(mbbox[0],mbbox[1])])
+
+#     ls_time = pd.to_datetime(ls_scene.time.values)
+#     calc_dt = datetime.strptime(ls_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
+#     start_dt = (calc_dt + timedelta(days=-0.5)).strftime('%Y-%m-%d %H:%M:%S')
+#     end_dt = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
+
+#     print(f'{start_dt},{end_dt},{mbbox}')
+    
+#     # Gather all files from search location from Terra and Aqua
+#     results = earthaccess.search_data(
+#         short_name='MOD07_L2',
+#         bounding_box=mbbox,
+#         temporal=(start_dt,end_dt)
+#     )
+#     results2 = earthaccess.search_data(
+#         short_name='MYD07_L2',
+#         bounding_box=mbbox,
+#         temporal=(start_dt,end_dt)
+#     )
+#     results = results + results2
+#     print(f'{len(results)} TOTAL granules')
+
+#     # Accept only granules that overlap at least 100% with Landsat
+#     best_grans = []
+#     for granule in results:
+#         try:
+#             granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons']
+#         except Exception as error:
+#             print(error)
+#             continue
+            
+#         for num in range(len(granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'])):
+#             try:
+#                 map_points = [(xi['Longitude'],xi['Latitude']) for xi in 
+#                              granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
+                
+#                 # Use new function that handles IDL
+#                 percent_dif = check_overlap_with_idl_handling(lsatpoly, map_points)
+                
+#                 if percent_dif == 0.0:
+#                     best_grans.append(granule)
+#                     if crosses_idl(map_points):
+#                         print(f'Added granule that crosses IDL')
+#                     continue
+                    
+#             except Exception as error:
+#                 print(f'Error processing granule polygon: {error}')
+                
+#     print(f'{len(best_grans)} TOTAL granules w overlap')
+
+#     # Find MODIS image closest in time to the Landsat image
+#     Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) 
+#               for granule in best_grans]
+#     ind = Mdates.index(min(Mdates, key=lambda x: abs(x - pytz.utc.localize(pd.to_datetime(ls_time)))))
+#     print(f'Time difference between MODIS and Landsat: {abs(Mdates[ind] - pytz.utc.localize(pd.to_datetime(ls_time)))}')
+
+#     # Download MODIS data
+#     data_links = [granule.data_links(access="external") for granule in best_grans[ind:ind+1]]
+#     netcdf_list = [g._filter_related_links("USE SERVICE API")[0].replace(".html", ".nc4") 
+#                    for g in best_grans[ind:ind+1]]
+#     file_handlers = earthaccess.download(netcdf_list, modout_path, provider='NSIDC')
+
+#     # Open MODIS data
+#     mod_list = os.listdir(modout_path)
+#     mod_list = [file for file in mod_list if file[-3:]=='nc4']
+#     modfilenm = mod_list[0]
+    
+#     os.rename(f'{modout_path}/{modfilenm}', f'{modout_path}/{modfilenm}.gz')
+#     with gzip.open(f'{modout_path}/{modfilenm}.gz', 'rb') as f_in:
+#         with open(f'{modout_path}/{modfilenm}', 'wb') as f_out:
+#             f_out.write(f_in.read())
+
+#     mod07 = xr.open_dataset(f'{modout_path}/{modfilenm}')
+#     mod07 = mod07.rio.write_crs('epsg:4326')
+
+#     # Delete MODIS file
+#     os.remove(f'{modout_path}/{modfilenm}')
+#     os.remove(f'{modout_path}/{modfilenm}.gz')
+    
+#     return mod07, modfilenm
+
+### Best last one, but wanted to add a MODIS 100+degree check
+# def open_MODIS(ls_scene, scene, modout_path):
+#     '''
+#     Search MOD/MDY07 atmospheric data and open water vapor for data collected closest in time to 
+#     Landsat scene. Handles scenes that cross the International Date Line.
+    
+#     Input:
+#     ls_scene = xarray dataset with Landsat scene
+#     modout_path = directory path for MODIS data
+#     scene = STAC catalog item
+    
+#     Output:
+#     mod07 = xarray dataset with MODIS (MOD/MDY07) water vapor 
+#     modfilenm = MODIS filename for image used in atm correction
+#     '''
+    
+#     # Get spatial extent of Landsat scene in lat/lon
+#     west, south, east, north = scene.metadata['bbox']
+    
+#     # Check if bbox crosses IDL
+#     crosses_idl_flag = (west > east) or (west > 170) or (east < -170)
+    
+#     if crosses_idl_flag:
+#         # print(f"Scene crosses IDL! Original bbox: [{west}, {south}, {east}, {north}]")
+        
+#         # Split into TWO bounding boxes - one on each side of the IDL
+#         # Western box: from west to 180
+#         bbox_west = (west, south, 180.0, north)
+#         # Eastern box: from -180 to east  
+#         bbox_east = (-180.0, south, east, north)
+        
+#         # print(f"Western bbox: {bbox_west}")
+#         # print(f"Eastern bbox: {bbox_east}")
+        
+#         # We'll search with both boxes and combine results
+#         search_bboxes = [bbox_west, bbox_east]
+        
+#         # For polygon overlap checks, use shifted coordinates (0-360)
+#         west_shifted = west if west >= 0 else west + 360
+#         east_shifted = east if east >= 0 else east + 360
+#         lsatpoly_shifted = Polygon([
+#             (west_shifted, south),
+#             (west_shifted, north),
+#             (east_shifted, north),
+#             (east_shifted, south),
+#             (west_shifted, south)
+#         ])
+#         lsatpoly = lsatpoly_shifted  # Use shifted polygon for overlap checks
+        
+#     else:
+#         # Normal case - no IDL crossing
+#         mbbox = (west, south, east, north)
+#         search_bboxes = [mbbox]
+#         lsatpoly = Polygon([
+#             (west, south),
+#             (west, north),
+#             (east, north),
+#             (east, south),
+#             (west, south)
+#         ])
+    
+#     ls_time = pd.to_datetime(ls_scene.time.values)
+#     calc_dt = datetime.strptime(ls_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
+#     start_dt = (calc_dt + timedelta(days=-0.5)).strftime('%Y-%m-%d %H:%M:%S')
+#     end_dt = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
+    
+#     # print(f'Temporal range: {start_dt} to {end_dt}')
+    
+#     # Search for MODIS data using all bounding boxes
+#     results = []
+#     for bbox in search_bboxes:
+#         # print(f'Searching with bbox: {bbox}')
+#         try:
+#             res_mod = earthaccess.search_data(
+#                 short_name='MOD07_L2',
+#                 bounding_box=bbox,
+#                 temporal=(start_dt, end_dt)
+#             )
+#             res_myd = earthaccess.search_data(
+#                 short_name='MYD07_L2',
+#                 bounding_box=bbox,
+#                 temporal=(start_dt, end_dt)
+#             )
+#             results.extend(res_mod)
+#             results.extend(res_myd)
+#         except Exception as e:
+#             print(f"Error searching with bbox {bbox}: {e}")
+#             continue
+    
+#     print(f'{len(results)} TOTAL granules')
+    
+#     # Accept only granules that overlap at least 100% with Landsat
+#     best_grans = []
+#     for granule in results:
+#         try:
+#             granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons']
+#         except Exception as error:
+#             print(error)
+#             continue
+            
+#         for num in range(len(granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'])):
+#             try:
+#                 map_points = [(xi['Longitude'], xi['Latitude']) for xi in 
+#                              granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
+                
+#                 if crosses_idl_flag:
+#                     # For IDL-crossing scenes, use the shifted coordinate system for overlap check
+#                     # Shift MODIS granule coordinates to 0-360
+#                     map_points_shifted = [(lon if lon >= 0 else lon + 360, lat) for lon, lat in map_points]
+                    
+#                     try:
+#                         modis_poly = Polygon(map_points_shifted)
+#                         percent_dif = lsatpoly.difference(modis_poly).area / lsatpoly.area
+#                     except:
+#                         percent_dif = 1.0  # Failed to create polygon
+#                 else:
+#                     # Normal overlap check
+#                     percent_dif = check_overlap_with_idl_handling(lsatpoly, map_points)
+                
+#                 if percent_dif == 0.0:
+#                     best_grans.append(granule)
+#                     # if crosses_idl(map_points):
+#                     #     print(f'Added granule that crosses IDL')
+#                     continue
+                    
+#             except Exception as error:
+#                 print(f'Error processing granule polygon: {error}')
+    
+#     # Remove duplicates (since we might search same granule from both boxes)
+#     unique_grans = []
+#     seen_ids = set()
+#     for gran in best_grans:
+#         gran_id = gran['umm']['GranuleUR']
+#         if gran_id not in seen_ids:
+#             unique_grans.append(gran)
+#             seen_ids.add(gran_id)
+    
+#     best_grans = unique_grans
+#     print(f'{len(best_grans)} TOTAL granules w overlap (after deduplication)')
+    
+#     if len(best_grans) == 0:
+#         raise ValueError(f"No MODIS granules found that overlap with Landsat scene. Scene bbox: {scene.metadata['bbox']}")
+    
+#     # Find MODIS image closest in time to the Landsat image
+#     Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) 
+#               for granule in best_grans]
+#     ind = Mdates.index(min(Mdates, key=lambda x: abs(x - pytz.utc.localize(pd.to_datetime(ls_time)))))
+#     print(f'Time difference between MODIS and Landsat: {abs(Mdates[ind] - pytz.utc.localize(pd.to_datetime(ls_time)))}')
+    
+#     # Download MODIS data
+#     data_links = [granule.data_links(access="external") for granule in best_grans[ind:ind+1]]
+#     netcdf_list = [g._filter_related_links("USE SERVICE API")[0].replace(".html", ".nc4") 
+#                    for g in best_grans[ind:ind+1]]
+#     file_handlers = earthaccess.download(netcdf_list, modout_path, provider='NSIDC')
+    
+#     # Open MODIS data
+#     mod_list = os.listdir(modout_path)
+#     mod_list = [file for file in mod_list if file[-3:]=='nc4']
+#     modfilenm = mod_list[0]
+    
+#     os.rename(f'{modout_path}/{modfilenm}', f'{modout_path}/{modfilenm}.gz')
+#     with gzip.open(f'{modout_path}/{modfilenm}.gz', 'rb') as f_in:
+#         with open(f'{modout_path}/{modfilenm}', 'wb') as f_out:
+#             f_out.write(f_in.read())
+    
+#     mod07 = xr.open_dataset(f'{modout_path}/{modfilenm}')
+#     mod07 = mod07.rio.write_crs('epsg:4326')
+    
+#     # Delete MODIS file
+#     os.remove(f'{modout_path}/{modfilenm}')
+#     os.remove(f'{modout_path}/{modfilenm}.gz')
+    
+#     return mod07, modfilenm
+
 def open_MODIS(ls_scene, scene, modout_path):
     '''
     Search MOD/MDY07 atmospheric data and open water vapor for data collected closest in time to 
-    Landsat scene.
+    Landsat scene. Handles scenes that cross the International Date Line.
+    Tries multiple MODIS granules until a valid one is found.
     
     Input:
     ls_scene = xarray dataset with Landsat scene
@@ -1423,30 +1765,81 @@ def open_MODIS(ls_scene, scene, modout_path):
     '''
 
     # Get spatial extent of Landsat scene in lat/lon
-    mbbox = (scene.metadata['bbox'][0], scene.metadata['bbox'][1], 
-             scene.metadata['bbox'][2], scene.metadata['bbox'][3])
-    lsatpoly = Polygon([(mbbox[0],mbbox[1]),(mbbox[0],mbbox[3]),
-                        (mbbox[2],mbbox[3]),(mbbox[2],mbbox[1]),(mbbox[0],mbbox[1])])
+    west, south, east, north = scene.metadata['bbox']
+    
+    # Check if bbox crosses IDL
+    crosses_idl_flag = (west > east) or (west > 170) or (east < -170)
+    
+    if crosses_idl_flag:
+        # Split into TWO bounding boxes - one on each side of the IDL
+        bbox_west = (west, south, 180.0, north)
+        bbox_east = (-180.0, south, east, north)
+        
+        search_bboxes = [bbox_west, bbox_east]
+        
+        # For polygon overlap checks, use shifted coordinates (0-360)
+        west_shifted = west if west >= 0 else west + 360
+        east_shifted = east if east >= 0 else east + 360
+        lsatpoly_shifted = Polygon([
+            (west_shifted, south),
+            (west_shifted, north),
+            (east_shifted, north),
+            (east_shifted, south),
+            (west_shifted, south)
+        ])
+        lsatpoly = lsatpoly_shifted
+        lsatpoly_360 = lsatpoly  # Already in 0-360
+        
+    else:
+        # Normal case - no IDL crossing
+        mbbox = (west, south, east, north)
+        search_bboxes = [mbbox]
+        
+        # Create polygon in -180/180
+        lsatpoly = Polygon([
+            (west, south),
+            (west, north),
+            (east, north),
+            (east, south),
+            (west, south)
+        ])
+        
+        # Also create a 0-360 version for when MODIS crosses the IDL
+        west_shifted = west if west >= 0 else west + 360
+        east_shifted = east if east >= 0 else east + 360
+        lsatpoly_360 = Polygon([
+            (west_shifted, south),
+            (west_shifted, north),
+            (east_shifted, north),
+            (east_shifted, south),
+            (west_shifted, south)
+        ])
 
     ls_time = pd.to_datetime(ls_scene.time.values)
     calc_dt = datetime.strptime(ls_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
     start_dt = (calc_dt + timedelta(days=-0.5)).strftime('%Y-%m-%d %H:%M:%S')
     end_dt = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
-
-    print(f'{start_dt},{end_dt},{mbbox}')
     
-    # Gather all files from search location from Terra and Aqua
-    results = earthaccess.search_data(
-        short_name='MOD07_L2',
-        bounding_box=mbbox,
-        temporal=(start_dt,end_dt)
-    )
-    results2 = earthaccess.search_data(
-        short_name='MYD07_L2',
-        bounding_box=mbbox,
-        temporal=(start_dt,end_dt)
-    )
-    results = results + results2
+    # Search for MODIS data using all bounding boxes
+    results = []
+    for bbox in search_bboxes:
+        try:
+            res_mod = earthaccess.search_data(
+                short_name='MOD07_L2',
+                bounding_box=bbox,
+                temporal=(start_dt, end_dt)
+            )
+            res_myd = earthaccess.search_data(
+                short_name='MYD07_L2',
+                bounding_box=bbox,
+                temporal=(start_dt, end_dt)
+            )
+            results.extend(res_mod)
+            results.extend(res_myd)
+        except Exception as e:
+            print(f"Error searching with bbox {bbox}: {e}")
+            continue
+    
     print(f'{len(results)} TOTAL granules')
 
     # Accept only granules that overlap at least 100% with Landsat
@@ -1460,140 +1853,606 @@ def open_MODIS(ls_scene, scene, modout_path):
             
         for num in range(len(granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'])):
             try:
-                map_points = [(xi['Longitude'],xi['Latitude']) for xi in 
+                map_points = [(xi['Longitude'], xi['Latitude']) for xi in 
                              granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
                 
-                # Use new function that handles IDL
-                percent_dif = check_overlap_with_idl_handling(lsatpoly, map_points)
+                # Check if this MODIS granule crosses the IDL
+                modis_lons = [p[0] for p in map_points]
+                modis_lon_span = max(modis_lons) - min(modis_lons)
+                modis_crosses_idl = modis_lon_span > 180
+                
+                # Use the appropriate Landsat polygon
+                if modis_crosses_idl:
+                    # MODIS crosses IDL - use 0-360 coordinate system for both
+                    map_points_shifted = [(lon if lon >= 0 else lon + 360, lat) for lon, lat in map_points]
+                    
+                    try:
+                        modis_poly = Polygon(map_points_shifted)
+                        percent_dif = lsatpoly_360.difference(modis_poly).area / lsatpoly_360.area
+                    except Exception as e:
+                        percent_dif = 1.0
+                else:
+                    # MODIS doesn't cross IDL - use normal -180/180 coordinates
+                    try:
+                        modis_poly = Polygon(map_points)
+                        percent_dif = lsatpoly.difference(modis_poly).area / lsatpoly.area
+                    except Exception as e:
+                        percent_dif = 1.0
                 
                 if percent_dif == 0.0:
                     best_grans.append(granule)
-                    if crosses_idl(map_points):
-                        print(f'Added granule that crosses IDL')
                     continue
                     
             except Exception as error:
                 print(f'Error processing granule polygon: {error}')
-                
-    print(f'{len(best_grans)} TOTAL granules w overlap')
+    
+    # Remove duplicates (since we might search same granule from both boxes)
+    unique_grans = []
+    seen_ids = set()
+    duplicates_removed = []
+    
+    for gran in best_grans:
+        gran_id = gran['umm']['GranuleUR']
+        if gran_id not in seen_ids:
+            unique_grans.append(gran)
+            seen_ids.add(gran_id)
+        else:
+            # Get filename of duplicates
+            modis_filename = "Unknown"
+            try:
+                for url_info in gran['umm']['RelatedUrls']:
+                    if 'URL' in url_info and '.hdf' in url_info['URL']:
+                        modis_filename = url_info['URL'].split('/')[-1]
+                        break
+            except:
+                modis_filename = gran_id
+            
+            duplicates_removed.append(modis_filename)
+    
+    best_grans = unique_grans
+    print(f'{len(best_grans)} TOTAL granules w overlap (after deduplication)')
+    
+    if len(best_grans) == 0:
+        raise ValueError(f"No MODIS granules found that overlap with Landsat scene. Scene bbox: {scene.metadata['bbox']}")
 
-    # Find MODIS image closest in time to the Landsat image
+    # Sort granules by time difference (closest first)
     Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) 
               for granule in best_grans]
-    ind = Mdates.index(min(Mdates, key=lambda x: abs(x - pytz.utc.localize(pd.to_datetime(ls_time)))))
-    print(f'Time difference between MODIS and Landsat: {abs(Mdates[ind] - pytz.utc.localize(pd.to_datetime(ls_time)))}')
-
-    # Download MODIS data
-    data_links = [granule.data_links(access="external") for granule in best_grans[ind:ind+1]]
-    netcdf_list = [g._filter_related_links("USE SERVICE API")[0].replace(".html", ".nc4") 
-                   for g in best_grans[ind:ind+1]]
-    file_handlers = earthaccess.download(netcdf_list, modout_path, provider='NSIDC')
-
-    # Open MODIS data
-    mod_list = os.listdir(modout_path)
-    mod_list = [file for file in mod_list if file[-3:]=='nc4']
-    modfilenm = mod_list[0]
+    time_diffs = [abs(d - pytz.utc.localize(pd.to_datetime(ls_time))) for d in Mdates]
+    sorted_indices = sorted(range(len(time_diffs)), key=lambda i: time_diffs[i])
     
-    os.rename(f'{modout_path}/{modfilenm}', f'{modout_path}/{modfilenm}.gz')
-    with gzip.open(f'{modout_path}/{modfilenm}.gz', 'rb') as f_in:
-        with open(f'{modout_path}/{modfilenm}', 'wb') as f_out:
-            f_out.write(f_in.read())
-
-    mod07 = xr.open_dataset(f'{modout_path}/{modfilenm}')
-    mod07 = mod07.rio.write_crs('epsg:4326')
-
-    # Delete MODIS file
-    os.remove(f'{modout_path}/{modfilenm}')
-    os.remove(f'{modout_path}/{modfilenm}.gz')
+    # Try up to 5 closest MODIS granules until find a valid one
+    max_attempts = min(5, len(best_grans))
     
-    return mod07, modfilenm
+    for attempt in range(max_attempts):
+        ind = sorted_indices[attempt]
+        time_diff = time_diffs[ind]
+        
+        print(f'\nAttempt {attempt+1}/{max_attempts}: Time difference = {time_diff}')
+        
+        try:
+            # Download MODIS data
+            data_links = [granule.data_links(access="external") for granule in best_grans[ind:ind+1]]
+            netcdf_list = [g._filter_related_links("USE SERVICE API")[0].replace(".html", ".nc4") 
+                           for g in best_grans[ind:ind+1]]
+            file_handlers = earthaccess.download(netcdf_list, modout_path, provider='NSIDC')
 
+            # Open MODIS data
+            mod_list = os.listdir(modout_path)
+            mod_list = [file for file in mod_list if file[-3:]=='nc4']
+            
+            if len(mod_list) == 0:
+                print(f"  ✗ No nc4 file downloaded, skipping...")
+                continue
+                
+            modfilenm = mod_list[0]
+            
+            # Decompress
+            os.rename(f'{modout_path}/{modfilenm}', f'{modout_path}/{modfilenm}.gz')
+            with gzip.open(f'{modout_path}/{modfilenm}.gz', 'rb') as f_in:
+                with open(f'{modout_path}/{modfilenm}', 'wb') as f_out:
+                    f_out.write(f_in.read())
+
+            # Open and validate
+            mod07 = xr.open_dataset(f'{modout_path}/{modfilenm}')
+            mod07 = mod07.rio.write_crs('epsg:4326')
+            
+            # Get MODIS data
+            modis_lon_vals = mod07.Longitude.values
+            modis_lat_vals = mod07.Latitude.values
+            wv_data = mod07['Water_Vapor'].values
+            valid_mask = np.isfinite(wv_data) & (wv_data > 0)
+            
+            valid_percent = 100 * np.sum(valid_mask) / valid_mask.size
+            
+            if np.sum(valid_mask) == 0:
+                print(f"  ✗ MODIS granule has no valid data")
+                os.remove(f'{modout_path}/{modfilenm}')
+                os.remove(f'{modout_path}/{modfilenm}.gz')
+                continue
+            
+            # Get Landsat bounds
+            ls_lon_min, ls_lat_min, ls_lon_max, ls_lat_max = scene.metadata['bbox']
+            ls_crosses_idl = (ls_lon_max < ls_lon_min) or (ls_lon_max - ls_lon_min > 180)
+            
+            # Check if MODIS crosses IDL
+            modis_lon_span = modis_lon_vals.max() - modis_lon_vals.min()
+            modis_crosses_idl = modis_lon_span > 180
+            
+            # Shift to 0-360 if either crosses IDL
+            if ls_crosses_idl or modis_crosses_idl:
+                modis_lon_shifted = modis_lon_vals.copy()
+                modis_lon_shifted[modis_lon_shifted < 0] += 360
+                
+                ls_lon_min_shifted = ls_lon_min if ls_lon_min >= 0 else ls_lon_min + 360
+                ls_lon_max_shifted = ls_lon_max if ls_lon_max >= 0 else ls_lon_max + 360
+            else:
+                modis_lon_shifted = modis_lon_vals
+                ls_lon_min_shifted = ls_lon_min
+                ls_lon_max_shifted = ls_lon_max
+            
+            # Get MODIS data extent (only valid data)
+            modis_lon_min = modis_lon_shifted[valid_mask].min()
+            modis_lon_max = modis_lon_shifted[valid_mask].max()
+            modis_lat_min = modis_lat_vals[valid_mask].min()
+            modis_lat_max = modis_lat_vals[valid_mask].max()
+            
+            print(f"  MODIS: lon [{modis_lon_min:.2f}, {modis_lon_max:.2f}], lat [{modis_lat_min:.2f}, {modis_lat_max:.2f}], {valid_percent:.1f}% valid")
+            print(f"  Landsat: lon [{ls_lon_min_shifted:.2f}, {ls_lon_max_shifted:.2f}], lat [{ls_lat_min:.2f}, {ls_lat_max:.2f}]")
+            
+            # Check coverage
+            buffer = 2.0  # degrees
+            lon_covered = (modis_lon_min - buffer <= ls_lon_min_shifted) and (ls_lon_max_shifted <= modis_lon_max + buffer)
+            lat_covered = (modis_lat_min - buffer <= ls_lat_min) and (ls_lat_max <= modis_lat_max + buffer)
+            
+            if not (lon_covered and lat_covered):
+                print(f"  ✗ MODIS doesn't cover Landsat scene")
+                os.remove(f'{modout_path}/{modfilenm}')
+                os.remove(f'{modout_path}/{modfilenm}.gz')
+                continue
+            
+            # Count points within Landsat extent
+            ls_mask = (
+                (modis_lon_shifted >= ls_lon_min_shifted - buffer) &
+                (modis_lon_shifted <= ls_lon_max_shifted + buffer) &
+                (modis_lat_vals >= ls_lat_min - buffer) &
+                (modis_lat_vals <= ls_lat_max + buffer) &
+                valid_mask
+            )
+            
+            points_in_scene = np.sum(ls_mask)
+            
+            if points_in_scene < 10:
+                print(f"  ✗ Only {points_in_scene} MODIS points over Landsat scene")
+                os.remove(f'{modout_path}/{modfilenm}')
+                os.remove(f'{modout_path}/{modfilenm}.gz')
+                continue
+            
+            print(f"  ✓ Valid! {points_in_scene} MODIS points over Landsat scene")
+            
+            # Clean up compressed file
+            os.remove(f'{modout_path}/{modfilenm}.gz')
+            os.remove(f'{modout_path}/{modfilenm}')
+            
+            return mod07, modfilenm
+            
+        except Exception as e:
+            print(f"  ✗ Error processing granule: {e}")
+            # Clean up any files that might exist
+            try:
+                if 'modfilenm' in locals():
+                    if os.path.exists(f'{modout_path}/{modfilenm}'):
+                        os.remove(f'{modout_path}/{modfilenm}')
+                    if os.path.exists(f'{modout_path}/{modfilenm}.gz'):
+                        os.remove(f'{modout_path}/{modfilenm}.gz')
+            except:
+                pass
+            continue
+    
+    # If we get here, all attempts failed
+    raise ValueError(
+        f"Could not find valid MODIS granule for Landsat scene after {max_attempts} attempts. "
+        f"Scene bbox: {scene.metadata['bbox']}"
+    )
+
+    
 ##########################
     
-def find_MODIS(lonboundsC,latboundsC,ls_scene):
-    '''
-    Finds the MODIS SST scene most closely coincident to a Landsat scene
-    Uses full Landsat scene extent, not cropped
+# def find_MODIS(lonboundsC,latboundsC,ls_scene):
+#     '''
+#     Finds the MODIS SST scene most closely coincident to a Landsat scene
+#     Uses full Landsat scene extent, not cropped
     
-    Variables: 
-    ls_scene = xarray for one Landsat scene
+#     Variables: 
+#     ls_scene = xarray for one Landsat scene
     
-    Outputs:
-    mod_scene = xarray of MODIS SST image coincident in time with the Landsat scene
-    granules[ind]['umm']['GranuleUR'] = modis file name
-    min_time = the time difference between the Landsat image acquisition and chosen MODIS image
+#     Outputs:
+#     mod_scene = xarray of MODIS SST image coincident in time with the Landsat scene
+#     granules[ind]['umm']['GranuleUR'] = modis file name
+#     min_time = the time difference between the Landsat image acquisition and chosen MODIS image
     
-    **not done, Differences from NLSST: 0.0 used as percent_dif requiring 100% overlap between MODIS and Landsat here since the subset area is so small
-    '''
+#     **not done, Differences from NLSST: 0.0 used as percent_dif requiring 100% overlap between MODIS and Landsat here since the subset area is so small
+#     '''
     
-    mbox = (lonboundsC[0],latboundsC[0],lonboundsC[1],latboundsC[1]) #east, south,west,north
+#     mbox = (lonboundsC[0],latboundsC[0],lonboundsC[1],latboundsC[1]) #east, south,west,north
 
-    # Construct a polygon to select a best fit MODIS image based on overlap
-    # Using the entire Landsat image
-    ls_scene_reproj = ls_scene.rio.reproject("EPSG:4326")
-    xmin,xmax,ymin,ymax = ls_scene_reproj.x.values[0],ls_scene_reproj.x.values[-1],ls_scene_reproj.y.values[0],ls_scene_reproj.y.values[-1]
-    lsatpoly = Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)])
+#     # Construct a polygon to select a best fit MODIS image based on overlap
+#     # Using the entire Landsat image
+#     ls_scene_reproj = ls_scene.rio.reproject("EPSG:4326")
+#     xmin,xmax,ymin,ymax = ls_scene_reproj.x.values[0],ls_scene_reproj.x.values[-1],ls_scene_reproj.y.values[0],ls_scene_reproj.y.values[-1]
+#     lsatpoly = Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)])
     
-    # Get date/time for Landsat image and search for corresponding MODIS imagery  
+#     # Get date/time for Landsat image and search for corresponding MODIS imagery  
+#     ls_time = pd.to_datetime(ls_scene.time.values)
+#     calc_dt = datetime.strptime(ls_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
+#     start_dt = (calc_dt + timedelta(days=-0.5)).strftime('%Y-%m-%d %H:%M:%S')
+#     end_dt = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
+    
+#     # Gather all files from search location from Terra and Aqua for the same day as the Landsat image
+#     granules = earthaccess.search_data(
+#         short_name='MODIS_T-JPL-L2P-v2019.0',
+#         bounding_box=mbox,
+#         # Day of a landsat scene to day after - searches day of only
+#         temporal=(start_dt,end_dt)
+#     )
+#     granules2 = earthaccess.search_data(
+#         short_name='MODIS_A-JPL-L2P-v2019.0', #MODIS_AQUA_L3_SST_THERMAL_DAILY_4KM_NIGHTTIME_V2019.0
+#         bounding_box=mbox,
+#         # Day of a landsat scene to day after - searches day of only
+#         temporal=(start_dt,end_dt)
+#     )
+#     granules = granules + granules2
+#     print (f'{len(granules)} TOTAL MODIS granules')
+
+#     # Accept only MODIS granules that overlap at least a perscribed amount with Landsat, in this case 100% => percent_dif=0.0
+#     best_grans = []
+#     for granule in granules:
+#         try:
+#             granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons']
+#         except Exception as error:
+#             print(error)
+#             continue
+#             # Would love to raise an exception for a valueerror except for GEOSError
+#         for num in range(len(granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'])):
+#             try:
+#                 # Extract points, make into a polygon
+#                 map_points = [(xi['Longitude'],xi['Latitude']) for xi in granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
+#                 pgon = Polygon(map_points)
+#                 percent_dif = lsatpoly.difference(pgon).area/lsatpoly.area
+#                 # If the polygon covers the landsat area, check to make sure it doesn't cross the international date line with a messed up polygon (these are searched wrong in earthaccess so probably need adjustment there)
+#                 if percent_dif == 0.0:
+#                     if crosses_idl(map_points):
+#                         print (f'A granule has messed up polygon that likely crosses the International DateLine')
+#                     else:
+#                         best_grans.append(granule)
+#                         continue
+#             except Exception as error:
+#                 print(error)
+#                 # Would love to raise an exception for a valueerror except for GEOSError
+#     print(f'{len(best_grans)} remaining MODIS granules')
+
+#     # Find MODIS image closest in time to each Landsat image
+#     # Make Landsat datetime timezone aware (UTC)
+#     Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) for granule in best_grans]
+#     ind = Mdates.index(min( Mdates, key=lambda x: abs(x - pytz.utc.localize(ls_time))))
+#     time_dif = abs(Mdates[ind] - pytz.utc.localize(pd.to_datetime(ls_time)))
+#     print(f'Time difference between MODIS and Landsat: {time_dif}')
+
+#     mod_scene = xr.open_dataset(earthaccess.open(best_grans[ind:ind+1])[0])
+#     mod_scene = mod_scene.rio.write_crs("epsg:4326", inplace=True) 
+    
+#     return mod_scene, granules[ind]['umm']['GranuleUR'],time_dif
+
+def find_MODIS(lonboundsC, latboundsC, ls_scene, buffer=2.0, min_points=10, max_attempts=5):
+    """
+    Finds the MODIS GHRSST L2P (Terra/Aqua) scene most closely coincident to a Landsat scene.
+    Adds IDL handling + multi-granule screening similar to open_MODIS().
+
+    Inputs
+    ------
+    lonboundsC : (west, east)  (degrees)
+    latboundsC : (south, north) (degrees)
+    ls_scene   : xarray Dataset for one Landsat scene
+    buffer     : degrees padding for coverage check
+    min_points : minimum # valid MODIS points within buffered Landsat extent
+    max_attempts : try this many closest-in-time candidates until one passes screening
+
+    Returns
+    -------
+    mod_scene : xarray Dataset of MODIS SST
+    mod_granule_ur : granule UR (filename-ish)
+    time_dif : timedelta between Landsat time and MODIS start time
+    """
+
+    west, east = float(lonboundsC[0]), float(lonboundsC[1])
+    south, north = float(latboundsC[0]), float(latboundsC[1])
+
+    # --- IDL detection ---
+    crosses_idl_flag = (west > east) or (west > 170) or (east < -170)
+    
+    if crosses_idl_flag:
+        bbox_west = (west, south, 180.0, north)
+        bbox_east = (-180.0, south, east, north)
+        search_bboxes = [bbox_west, bbox_east]
+    
+        west_shifted = west if west >= 0 else west + 360
+        east_shifted = east if east >= 0 else east + 360
+        lsatpoly_shifted = Polygon([
+            (west_shifted, south),
+            (west_shifted, north),
+            (east_shifted, north),
+            (east_shifted, south),
+            (west_shifted, south)
+        ])
+        lsatpoly = lsatpoly_shifted
+        lsatpoly_360 = lsatpoly  # Already in 0-360
+    else:
+        search_bboxes = [(west, south, east, north)]
+        
+        # Create polygon in -180/180
+        lsatpoly = Polygon([
+            (west, south),
+            (west, north),
+            (east, north),
+            (east, south),
+            (west, south)
+        ])
+        
+        # Also create a 0-360 version for when MODIS crosses IDL
+        west_shifted = west if west >= 0 else west + 360
+        east_shifted = east if east >= 0 else east + 360
+        lsatpoly_360 = Polygon([
+            (west_shifted, south),
+            (west_shifted, north),
+            (east_shifted, north),
+            (east_shifted, south),
+            (west_shifted, south)
+        ])
+
+    # --- Time window ---
     ls_time = pd.to_datetime(ls_scene.time.values)
     calc_dt = datetime.strptime(ls_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
     start_dt = (calc_dt + timedelta(days=-0.5)).strftime('%Y-%m-%d %H:%M:%S')
-    end_dt = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Gather all files from search location from Terra and Aqua for the same day as the Landsat image
-    granules = earthaccess.search_data(
-        short_name='MODIS_T-JPL-L2P-v2019.0',
-        bounding_box=mbox,
-        # Day of a landsat scene to day after - searches day of only
-        temporal=(start_dt,end_dt)
-    )
-    granules2 = earthaccess.search_data(
-        short_name='MODIS_A-JPL-L2P-v2019.0', #MODIS_AQUA_L3_SST_THERMAL_DAILY_4KM_NIGHTTIME_V2019.0
-        bounding_box=mbox,
-        # Day of a landsat scene to day after - searches day of only
-        temporal=(start_dt,end_dt)
-    )
-    granules = granules + granules2
-    print (f'{len(granules)} TOTAL MODIS granules')
+    end_dt   = (calc_dt + timedelta(days=0.5)).strftime('%Y-%m-%d %H:%M:%S')
 
-    # Accept only MODIS granules that overlap at least a perscribed amount with Landsat, in this case 100% => percent_dif=0.0
-    best_grans = []
-    for granule in granules:
+    # --- Search Terra + Aqua over all relevant bboxes ---
+    results = []
+    for bbox in search_bboxes:
         try:
-            granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons']
-        except Exception as error:
-            print(error)
+            res_t = earthaccess.search_data(
+                short_name='MODIS_T-JPL-L2P-v2019.0',
+                bounding_box=bbox,
+                temporal=(start_dt, end_dt),
+            )
+            res_a = earthaccess.search_data(
+                short_name='MODIS_A-JPL-L2P-v2019.0',
+                bounding_box=bbox,
+                temporal=(start_dt, end_dt),
+            )
+            results.extend(res_t)
+            results.extend(res_a)
+        except Exception as e:
+            print(f"Error searching with bbox {bbox}: {e}")
             continue
-            # Would love to raise an exception for a valueerror except for GEOSError
-        for num in range(len(granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'])):
-            try:
-                # Extract points, make into a polygon
-                map_points = [(xi['Longitude'],xi['Latitude']) for xi in granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons'][num]['Boundary']['Points']]
-                pgon = Polygon(map_points)
-                percent_dif = lsatpoly.difference(pgon).area/lsatpoly.area
-                # If the polygon covers the landsat area, check to make sure it doesn't cross the international date line with a messed up polygon (these are searched wrong in earthaccess so probably need adjustment there)
-                if percent_dif == 0.0:
-                    if crosses_idl(map_points):
-                        print (f'A granule has messed up polygon that likely crosses the International DateLine')
-                    else:
-                        best_grans.append(granule)
-                        continue
-            except Exception as error:
-                print(error)
-                # Would love to raise an exception for a valueerror except for GEOSError
-    print(f'{len(best_grans)} remaining MODIS granules')
 
-    # Find MODIS image closest in time to each Landsat image
-    # Make Landsat datetime timezone aware (UTC)
-    Mdates = [pd.to_datetime(granule['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime']) for granule in best_grans]
-    ind = Mdates.index(min( Mdates, key=lambda x: abs(x - pytz.utc.localize(ls_time))))
-    time_dif = abs(Mdates[ind] - pytz.utc.localize(pd.to_datetime(ls_time)))
-    print(f'Time difference between MODIS and Landsat: {time_dif}')
+    print(f"{len(results)} TOTAL MODIS granules (raw search results)")
 
-    mod_scene = xr.open_dataset(earthaccess.open(best_grans[ind:ind+1])[0])
-    mod_scene = mod_scene.rio.write_crs("epsg:4326", inplace=True) 
+    # --- Overlap screening (IDL-aware) ---
+    best_grans = []
+    for granule in results:
+        try:
+            gpolys = granule['umm']['SpatialExtent']['HorizontalSpatialDomain']['Geometry']['GPolygons']
+        except Exception as e:
+            continue
     
-    return mod_scene, granules[ind]['umm']['GranuleUR'],time_dif
+        for gp in gpolys:
+            try:
+                map_points = [(pt['Longitude'], pt['Latitude']) for pt in gp['Boundary']['Points']]
+    
+                # Check if this MODIS granule crosses the IDL
+                modis_lons = [p[0] for p in map_points]
+                modis_lon_span = max(modis_lons) - min(modis_lons)
+                modis_crosses_idl = modis_lon_span > 180
+                
+                # Use appropriate Landsat polygon
+                if modis_crosses_idl:
+                    # MODIS crosses IDL - use 0-360 coordinate system for both
+                    map_points_shifted = [(lon if lon >= 0 else lon + 360, lat) for lon, lat in map_points]
+                    try:
+                        modis_poly = Polygon(map_points_shifted)
+                        percent_dif = lsatpoly_360.difference(modis_poly).area / lsatpoly_360.area
+                    except Exception:
+                        percent_dif = 1.0
+                else:
+                    # MODIS doesn't cross IDL - use normal -180/180 coordinates
+                    try:
+                        modis_poly = Polygon(map_points)
+                        percent_dif = lsatpoly.difference(modis_poly).area / lsatpoly.area
+                    except Exception:
+                        percent_dif = 1.0
+    
+                if percent_dif == 0.0:
+                    best_grans.append(granule)
+                    break
+    
+            except Exception as e:
+                continue
+
+    # --- Deduplicate (searching two bboxes can return the same granule twice) ---
+    unique_grans = []
+    seen = set()
+    for g in best_grans:
+        gid = g['umm'].get('GranuleUR', None)
+        if gid is None:
+            continue
+        if gid not in seen:
+            unique_grans.append(g)
+            seen.add(gid)
+
+    best_grans = unique_grans
+    print(f"{len(best_grans)} TOTAL granules w overlap (after deduplication)")
+
+    if len(best_grans) == 0:
+        raise ValueError(f"No MODIS granules found that overlap Landsat extent. "
+                         f"lonbounds={lonboundsC}, latbounds={latboundsC}")
+
+    # --- Sort by time difference (closest first), then try multiple until valid ---
+    Mdates = [
+        pd.to_datetime(g['umm']['TemporalExtent']['RangeDateTime']['BeginningDateTime'])
+        for g in best_grans
+    ]
+    time_diffs = [abs(d - pytz.utc.localize(pd.to_datetime(ls_time))) for d in Mdates]
+    sorted_idx = sorted(range(len(time_diffs)), key=lambda i: time_diffs[i])
+
+    max_attempts = min(max_attempts, len(best_grans))
+
+    # Landsat bounds in a consistent longitude system for coverage checks
+    ls_lon_min, ls_lon_max = west, east
+    ls_lat_min, ls_lat_max = south, north
+    ls_crosses_idl = crosses_idl_flag
+
+    for attempt in range(max_attempts):
+        i = sorted_idx[attempt]
+        g = best_grans[i]
+        time_dif = time_diffs[i]
+        gran_ur = g['umm']['GranuleUR'] 
+        print(f"\nAttempt {attempt+1}/{max_attempts}: {gran_ur}  (Δt={time_dif})")
+    
+        try:
+            fh = earthaccess.open([g])[0]
+            mod_scene = xr.open_dataset(fh)
+            mod_scene = mod_scene.rio.write_crs("epsg:4326", inplace=True)
+    
+            # Find SST variable
+            sst_var_candidates = ["sea_surface_temperature", "sst", "Sea_Surface_Temperature"]
+            sst_name = next((v for v in sst_var_candidates if v in mod_scene.variables), None)
+            if sst_name is None:
+                print("  ✗ Could not find SST variable; skipping.")
+                continue
+    
+            sst = mod_scene[sst_name].values
+            sst = sst.squeeze(axis=0)
+            
+            print(f"\n  === QA Diagnostics ===")
+            print(f"  SST finite: {np.sum(np.isfinite(sst))} / {sst.size} ({100*np.sum(np.isfinite(sst))/sst.size:.1f}%)")
+            
+            # Check quality_level
+            if "quality_level" in mod_scene.variables:
+                ql = mod_scene["quality_level"].values
+                if ql.ndim == 3 and ql.shape[0] == 1:
+                    ql = ql.squeeze(axis=0)  # ✅ Squeeze here too
+                
+                print(f"  Quality level distribution:")
+                for level in range(6):
+                    count = np.sum(ql == level)
+                    pct = 100 * count / ql.size
+                    print(f"    Level {level}: {count} pixels ({pct:.1f}%)")
+                
+                for level in range(6):
+                    mask = (ql == level) & np.isfinite(sst)
+                    count = np.sum(mask)
+                    if count > 0:
+                        print(f"    Level {level} with finite SST: {count} pixels")
+            
+            # Accept Level 1 or higher (questionable quality acceptable for Antarctica)
+            valid_mask = np.isfinite(sst)
+            
+            if "quality_level" in mod_scene.variables:
+                valid_mask = valid_mask & (ql >= 1)  # Changed to >= 1
+                print(f"  After QA (quality >= 1): {np.sum(valid_mask)} valid pixels")
+            
+            print(f"  ======================\n")
+    
+    
+            if np.sum(valid_mask) == 0:
+                print("  ✗ No valid SST values after QA; skipping.")
+                continue
+    
+            # Get lon/lat
+            if "lon" in mod_scene.coords:
+                mod_lon = mod_scene["lon"].values
+            elif "longitude" in mod_scene.variables:
+                mod_lon = mod_scene["longitude"].values
+            else:
+                print("  ✗ Could not find lon; skipping.")
+                continue
+    
+            if "lat" in mod_scene.coords:
+                mod_lat = mod_scene["lat"].values
+            elif "latitude" in mod_scene.variables:
+                mod_lat = mod_scene["latitude"].values
+            else:
+                print("  ✗ Could not find lat; skipping.")
+                continue
+    
+            # Handle 1D vs 2D coordinates
+            if mod_lon.ndim == 1 and mod_lat.ndim == 1:
+                LON, LAT = np.meshgrid(mod_lon, mod_lat)
+            else:
+                LON, LAT = mod_lon, mod_lat
+    
+            # Shift if needed
+            if crosses_idl_flag:
+                LON_shifted = LON.copy()
+                LON_shifted[LON_shifted < 0] += 360
+                ls_lon_min_shift = ls_lon_min if ls_lon_min >= 0 else ls_lon_min + 360
+                ls_lon_max_shift = ls_lon_max if ls_lon_max >= 0 else ls_lon_max + 360
+            else:
+                LON_shifted = LON
+                ls_lon_min_shift, ls_lon_max_shift = ls_lon_min, ls_lon_max
+    
+            # Get min/max from valid data only
+            valid_lons = LON_shifted[valid_mask]
+            valid_lats = LAT[valid_mask]
+            
+            if len(valid_lons) == 0:
+                print("  ✗ No valid coordinates; skipping.")
+                continue
+                
+            mod_lon_min = valid_lons.min()
+            mod_lon_max = valid_lons.max()
+            mod_lat_min = valid_lats.min()
+            mod_lat_max = valid_lats.max()
+    
+            lon_covered = (mod_lon_min - buffer <= ls_lon_min_shift) and (ls_lon_max_shift <= mod_lon_max + buffer)
+            lat_covered = (mod_lat_min - buffer <= ls_lat_min) and (ls_lat_max <= mod_lat_max + buffer)
+    
+            print(f"  MODIS: lon [{mod_lon_min:.2f}, {mod_lon_max:.2f}] lat [{mod_lat_min:.2f}, {mod_lat_max:.2f}]")
+            print(f"  Landsat: lon [{ls_lon_min_shift:.2f}, {ls_lon_max_shift:.2f}] lat [{ls_lat_min:.2f}, {ls_lat_max:.2f}]")
+    
+            if not (lon_covered and lat_covered):
+                print("  ✗ Doesn't cover Landsat; skipping.")
+                continue
+    
+            # Count points
+            in_scene = (
+                (LON_shifted >= ls_lon_min_shift - buffer) &
+                (LON_shifted <= ls_lon_max_shift + buffer) &
+                (LAT >= ls_lat_min - buffer) &
+                (LAT <= ls_lat_max + buffer) &
+                valid_mask
+            )
+            points_in_scene = int(np.sum(in_scene))
+    
+            if points_in_scene < min_points:
+                print(f"  ✗ Only {points_in_scene} points; skipping.")
+                continue
+    
+            print(f"  ✓ Valid! {points_in_scene} MODIS points")
+            return mod_scene, gran_ur, time_dif
+    
+        except Exception as e:
+            print(f"  ✗ Error: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+
+    raise ValueError(
+        f"Could not find a valid MODIS SST granule after {max_attempts} attempts. "
+        f"lonbounds={lonboundsC}, latbounds={latboundsC}"
+    )
+
 
 ##########################  
 
@@ -1638,18 +2497,14 @@ def get_wv(ls_scene,mod07,spacing,param,scene,interp=0):
     LRX = ls_scene.x[-1] 
     LRY = ls_scene.y[-1] 
     box = [ULX,LRX,ULY,LRY]
+
+    # Apply QC
+    data, qa_stats = apply_modis_qa(mod07)
     
     #Extract desired datasets from MODIS file from lookup key (automatically scaled by xarray so no need to do it here)
-    data = mod07[param].values
+    # data = mod07[param].values # use this if don't QC
     lat, lon = mod07.Latitude, mod07.Longitude
     #data.attributes()
-
-    # Test lat is in correct range
-    if ~((lat <= 90) & (lat >= -90)).all():
-        print('MODIS latitude not between -90 and 90')
-    # Test lon is in correct range
-    if ~((lon <= 180) & (lon >= -180)).all():
-        print('MODIS longitude not between -180 and 180')
 
     # ***Need to use climatology to retrieve quantile data from this area
     
@@ -1660,12 +2515,16 @@ def get_wv(ls_scene,mod07,spacing,param,scene,interp=0):
     # data = np.around(mask2*data,decimals=5)
 
     # Interpolate using PyGMT
-    if interp==1:  
-        grid = interpMOD(data,lat,lon)
-        
-        # Produce indicies for aligning MODIS pixel subset to match Landsat image at 4000m (or 300)resolution
-        indiciesMOD,lines,samples,lat,lon = MODISlookup(mod07,ls_scene,box,spacing,scene,interpgrid=grid)
-        data = grid.values
+    if interp==1: 
+        try:
+            grid = interpMOD(data,lat,lon,scene)
+            # Produce indicies for aligning MODIS pixel subset to match Landsat image at 4000m (or 300)resolution
+            indiciesMOD,lines,samples,lat,lon = MODISlookup(mod07,ls_scene,box,spacing,scene,interpgrid=grid)
+            data = grid.values
+        except Exception as e: 
+            print(e)
+            print (f'atm correction of {ls_scene.id.values} failed')
+            raise
         
     else:
         # Produce indicies for aligning MODIS pixel subset to match Landsat image at 4000m (or 300)resolution
@@ -1700,7 +2559,7 @@ def get_wv(ls_scene,mod07,spacing,param,scene,interp=0):
     WV_xr = WV_xr.rename({'longitude':'x','latitude':'y'})
     
     return WV_xr
-
+    
 ##########################  
 
 def get_sst(ls_scene,mod07,spacing,param):
@@ -1740,7 +2599,7 @@ def get_sst(ls_scene,mod07,spacing,param):
         lat, lon = mod07.Latitude, mod07.Longitude    
 
     # Produce indicies for aligning MODIS pixel subset to match Landsat image at 4000m (or 300)resolution
-    indiciesMOD,lines,samples = MODISslookup(mod07,ls_scene,box,spacing)
+    indiciesMOD,lines,samples = MODISsstlookup(mod07,ls_scene,box,spacing)
 
     # Align MODIS SST to Landsat on slightly upsampled grid # have the option to output `uniqImgWV` if want to know range of data
     dataOutWV_xr = alignMODIS(data,lat,lon,param,indiciesMOD,lines,samples,mod07,ls_scene,spacing)
@@ -1765,58 +2624,465 @@ def get_sst(ls_scene,mod07,spacing,param):
     WV_xr = WV_xr.set_index(y='y')
     
     return WV_xr
-           
+    
+##############
 
-##########################
-            
-def interpMOD(data,lat,lon):
+def apply_modis_qa(mod07, WV='Water_Vapor'):
     """
-    Interpolate spatial water vapor data using PyGMT.
+    Essential MODIS MOD07 quality control - removes redundancy
+    
+    QC Criteria:
+    1. Water_Vapor: not fill value (-9999) and valid
+    2. Quality_Assurance_Infrared: useful=1 AND confidence>=1 (marginal or better)
+    3. Cloud_Mask (bits 6-7): Land/Water = water (00) only, rejecting coastal mixed (01), desert/ice (10), and land (11)
+    """
+    wv_data = mod07[WV].values.copy()
+    total_pixels = wv_data.size
+    
+    combined_mask = np.ones_like(wv_data, dtype=bool)
+    qa_stats = {'total': total_pixels}
+    
+    
+    # 1. Water_Vapor valid
+    wv_valid = (wv_data != -9999) & np.isfinite(wv_data) & (wv_data > 0)
+    combined_mask &= wv_valid
+    qa_stats['wv_rejected'] = np.sum(~wv_valid)
+    print(f"  After WV check: {np.sum(combined_mask)} valid ({100*np.sum(combined_mask)/total_pixels:.1f}%)")
+    
+    
+    # 2. Quality_Assurance_Infrared (Byte 0 only)
+    qa_byte0 = mod07['Quality_Assurance_Infrared'][:, :, 0].values  # ✅ Fixed: define qa_byte0 here
+    qa_byte0 = qa_byte0.astype(np.int32)
+        
+    usefulness = (qa_byte0 >> 0) & 0b1
+    confidence = (qa_byte0 >> 1) & 0b11
+    
+    qa_ir_valid = (usefulness == 1) & (confidence >= 1)
+    combined_mask &= qa_ir_valid
+    qa_stats['qa_rejected'] = np.sum(~qa_ir_valid)
+    print(f"  After QA_IR check: {np.sum(combined_mask)} valid ({100*np.sum(combined_mask)/total_pixels:.1f}%)")
+    
+    
+    # 3. Masking for land, coastal because mixed and throws off WV values by a lot, desert because likely land ice
+    cloud_mask = mod07['Cloud_Mask'].values.copy()
+        
+    # Convert signed to unsigned
+    cloud_unsigned = np.where(cloud_mask < 0, cloud_mask + 256, cloud_mask).astype(np.int32)
+    
+    # Bits 6-7: Land/Water Flag (shift right by 6 to get these bits)
+    land_water = (cloud_unsigned >> 6) & 0b11
+    
+    print(f"  Cloud_Mask Land/Water unique: {np.unique(land_water)}")
+    print(f"    0=Water: {np.sum(land_water==0)}, 1=Coastal: {np.sum(land_water==1)}, 2=Desert: {np.sum(land_water==2)}, 3=Land: {np.sum(land_water==3)}")
+    
+    # Keep water (0) only
+    is_valid_surface = (land_water == 0)  # ✅ Fixed: use is_valid_surface consistently
+    combined_mask &= is_valid_surface
+    qa_stats['land_rejected'] = np.sum(~is_valid_surface)
+    print(f"  After Land/Water check: {np.sum(combined_mask)} valid ({100*np.sum(combined_mask)/total_pixels:.1f}%)")
+    
+    
+    # Apply mask
+    wv_data[~combined_mask] = np.nan
+    qa_stats['valid'] = np.sum(np.isfinite(wv_data))
+    qa_stats['valid_pct'] = 100 * qa_stats['valid'] / total_pixels
+    
+    print(f"  → Final MODIS QC: {qa_stats['valid_pct']:.1f}% valid ({qa_stats['valid']}/{total_pixels} pixels)")
+    
+    return wv_data, qa_stats
+    
+#######
 
-    This function takes arrays of water vapor data along with corresponding latitude and longitude values,
-    performs interpolation to fill in gaps in the data, and produces a continuous surface representation of water vapor.
+# def interpMOD(data,lat,lon):
+#     """
+#     Interpolate spatial water vapor data using PyGMT.
 
-    Args:
-        data (numpy.ndarray): 2D array of water vapor measurements.
-        lat (numpy.ndarray): 2D array of latitude values corresponding to `data`.
-        lon (numpy.ndarray): 2D array of longitude values corresponding to `data`.
+#     This function takes arrays of water vapor data along with corresponding latitude and longitude values,
+#     performs interpolation to fill in gaps in the data, and produces a continuous surface representation of water vapor.
 
-    Returns:
-        grid (xarray.DataArray): A PyGMT grid object representing the interpolated surface of water vapor data.
+#     Args:
+#         data (numpy.ndarray): 2D array of water vapor measurements.
+#         lat (numpy.ndarray): 2D array of latitude values corresponding to `data`.
+#         lon (numpy.ndarray): 2D array of longitude values corresponding to `data`.
+
+#     Returns:
+#         grid (xarray.DataArray): A PyGMT grid object representing the interpolated surface of water vapor data.
+#     """
+    
+#     # Interpolate using PyGMT
+#     # Extract necessary data into Pandas DataFrame (required for PyGMT)
+#     df = pd.DataFrame({
+#         'longitude': lon.values.flatten(), # Flatten to convert from 2D to 1D array
+#         'latitude': lat.values.flatten(),
+#         'water_vapor': data.flatten() # Actual data values to be interpolated
+#     })
+
+#     # Remove missing or NaN values from DataFrame, as `surface` cannot handle them
+#     df = df.dropna(subset=['water_vapor'])
+
+#     # Determine the geographical extent for the interpolation based on the provided data points.
+#     # This is necessary to define the spatial domain over which PyGMT will perform interpolation.
+#     # [xmin, xmax, ymin, ymax] - made this the full image
+#     region = [df.longitude.min(), df.longitude.max(), df.latitude.min(), df.latitude.max()]
+#     # Alternatively, if the region is predefined (e.g., from metadata), it can be set directly.
+
+#     # Use PyGMT to interpolate the data. PyGMT requires a session context to manage memory and configuration
+#     # settings efficiently during its operations.
+#     with pygmt.clib.Session() as session:
+#         # Perform grid-based surface interpolation.
+#         # The `data` parameter takes longitude, latitude, and water vapor as a NumPy array.
+#         # `region` specifies the geographical extent.
+#         # `spacing` sets the resolution of the output grid, here 0.3 km for high resolution.
+#         # `tension` controls the stiffness of the interpolating surface. A value of 0.25 gives a balance between
+#         # fitting the data closely and producing a smooth surface.
+#         grid = pygmt.surface(
+#             data=df[['longitude', 'latitude', 'water_vapor']].to_numpy(),  # Input data as NumPy array
+#             region=region,  
+#             spacing=['0.15k','0.05k'],  # f'0.3k'
+#             tension=0.95,  
+#         )   
+    
+#     return grid
+
+# def interpMOD(data, lat, lon):
+#     """
+#     Interpolate spatial water vapor data using PyGMT with proper preprocessing.
+    
+#     Args:
+#         data (numpy.ndarray): 2D array of water vapor measurements.
+#         lat (numpy.ndarray): 2D array of latitude values corresponding to `data`.
+#         lon (numpy.ndarray): 2D array of longitude values corresponding to `data`.
+    
+#     Returns:
+#         grid (xarray.DataArray): A PyGMT grid object representing the interpolated 
+#                                  surface of water vapor data.
+#     """
+    
+#     # Extract data into DataFrame
+#     df = pd.DataFrame({
+#         'longitude': lon.values.flatten(),
+#         'latitude': lat.values.flatten(),
+#         'water_vapor': data.flatten()
+#     })
+    
+#     # Clean data
+#     df = df.dropna(subset=['water_vapor'])
+#     df = df[np.isfinite(df['water_vapor'])]
+#     df = df[np.isfinite(df['longitude']) & np.isfinite(df['latitude'])]
+#     df = df.drop_duplicates(subset=['longitude', 'latitude'], keep='first')
+    
+#     print(f"Valid data points: {len(df)}")
+    
+#     if len(df) < 10:
+#         raise ValueError(f"Too few valid data points ({len(df)}) for interpolation")
+    
+#     # Get data bounds
+#     lon_min = df.longitude.min()
+#     lon_max = df.longitude.max()
+#     lat_min = df.latitude.min()
+#     lat_max = df.latitude.max()
+    
+#     # Calculate approximate spacing in degrees
+#     # At ~73°S (average Antarctica latitude), 1° lon ≈ 33 km, 1° lat ≈ 111 km
+#     avg_lat = (lat_min + lat_max) / 2
+    
+#     # Desired spacing in km
+#     spacing_x_km = 0.15  # Want 0.15 km in longitude direction
+#     spacing_y_km = 0.05  # Want 0.05 km in latitude direction
+    
+#     # Convert to degrees
+#     # At avg_lat, 1 degree longitude = 111 * cos(lat) km
+#     # At any latitude, 1 degree latitude = 111 km
+#     km_per_deg_lon = 111.0 * np.cos(np.radians(avg_lat))
+#     km_per_deg_lat = 111.0
+    
+#     spacing_x_deg = spacing_x_km / km_per_deg_lon
+#     spacing_y_deg = spacing_y_km / km_per_deg_lat
+    
+#     print(f"Spacing in degrees: x={spacing_x_deg:.6f}°, y={spacing_y_deg:.6f}°")
+    
+#     # Calculate number of grid cells (must be integer)
+#     nx = int(np.round((lon_max - lon_min) / spacing_x_deg))
+#     ny = int(np.round((lat_max - lat_min) / spacing_y_deg))
+    
+#     # Make sure we have at least 2 cells in each direction
+#     nx = max(nx, 2)
+#     ny = max(ny, 2)
+    
+#     print(f"Grid dimensions: {nx} x {ny} cells")
+    
+#     # Adjust max bounds to be EXACTLY compatible with spacing
+#     lon_max_adjusted = lon_min + nx * spacing_x_deg
+#     lat_max_adjusted = lat_min + ny * spacing_y_deg
+    
+#     region = [lon_min, lon_max_adjusted, lat_min, lat_max_adjusted]
+    
+#     print(f"Region: [{region[0]:.6f}, {region[1]:.6f}, {region[2]:.6f}, {region[3]:.6f}]")
+#     print(f"Region extent: x={region[1]-region[0]:.6f}°, y={region[3]-region[2]:.6f}°")
+#     print(f"Expected extent: x={nx * spacing_x_deg:.6f}°, y={ny * spacing_y_deg:.6f}°")
+    
+#     # Verify compatibility (should be equal within floating point precision)
+#     x_diff = abs((region[1] - region[0]) - (nx * spacing_x_deg))
+#     y_diff = abs((region[3] - region[2]) - (ny * spacing_y_deg))
+    
+#     if x_diff > 1e-10 or y_diff > 1e-10:
+#         print(f"WARNING: Region not compatible! x_diff={x_diff}, y_diff={y_diff}")
+    
+#     print(f"Data points before block median: {len(df)}")
+    
+#     # Preprocess with block median using DEGREE spacing
+#     with pygmt.clib.Session() as session:
+#         df_blocked = pygmt.blockmedian(
+#             data=df[['longitude', 'latitude', 'water_vapor']],
+#             region=region,
+#             spacing=f'{spacing_x_deg}/{spacing_y_deg}',  # DEGREES, not km
+#         )
+    
+#     print(f"Data points after block median: {len(df_blocked)}")
+    
+#     # Check for points outside region
+#     outside = ((df_blocked['longitude'] < region[0]) | 
+#                (df_blocked['longitude'] > region[1]) | 
+#                (df_blocked['latitude'] < region[2]) | 
+#                (df_blocked['latitude'] > region[3]))
+    
+#     if outside.sum() > 0:
+#         print(f"WARNING: {outside.sum()} points outside region after block median")
+    
+#     # Perform surface interpolation using DEGREE spacing
+#     with pygmt.clib.Session() as session:
+#         grid = pygmt.surface(
+#             data=df_blocked,
+#             region=region,
+#             spacing=f'{spacing_x_deg}/{spacing_y_deg}',  # DEGREES, not km
+#             tension=0.95,
+#         )
+    
+#     print(f"Output grid shape: {grid.shape}")
+#     print(f"Expected shape: ({ny+1}, {nx+1})")  # +1 because grid includes endpoints
+    
+#     return grid
+
+def interpMOD(data, lat, lon, scene, target_spacing_m=1500, buffer_deg=2.0):
+    """
+    Interpolate spatial water vapor data using PyGMT over the Landsat scene extent.
     """
     
-    # Interpolate using PyGMT
-    # Extract necessary data into Pandas DataFrame (required for PyGMT)
+    # Check if lat/lon are xarray DataArrays or numpy arrays
+    if hasattr(lat, 'values'):
+        lat_vals = lat.values
+        lon_vals = lon.values
+    else:
+        lat_vals = lat
+        lon_vals = lon
+    
+    # Get Landsat scene extent from metadata
+    lon_min, lat_min, lon_max, lat_max = scene.metadata['bbox']
+    
+    # Check if LANDSAT crosses IDL
+    landsat_crosses_idl = (lon_max < lon_min) or (lon_max - lon_min > 180)
+    
+    # Check if MODIS data crosses IDL
+    modis_lon_span = lon_vals.max() - lon_vals.min()
+    modis_crosses_idl = modis_lon_span > 180
+    
+    # If EITHER crosses, shift BOTH to 0-360
+    crosses_idl = landsat_crosses_idl or modis_crosses_idl
+    
+    # Shift coordinates BEFORE masking
+    if crosses_idl:
+        if landsat_crosses_idl and modis_crosses_idl:
+            print("⚠️  Both Landsat and MODIS cross IDL! Shifting to 0-360 range")
+        elif landsat_crosses_idl:
+            print("⚠️  Landsat crosses IDL! Shifting to 0-360 range")
+        else:
+            print("⚠️  MODIS crosses IDL! Shifting to 0-360 range")
+        
+        # Shift MODIS longitude array
+        lon_shifted = lon_vals.copy()
+        lon_shifted[lon_shifted < 0] += 360
+        
+        # Shift Landsat bounds
+        if lon_min < 0:
+            lon_min += 360
+        if lon_max < 0:
+            lon_max += 360
+        
+        # print(f"Shifted Landsat extent: lon [{lon_min:.4f}, {lon_max:.4f}]")
+        # print(f"Shifted MODIS extent: lon [{lon_shifted.min():.4f}, {lon_shifted.max():.4f}]")
+    else:
+        lon_shifted = lon_vals
+    
+    print(f"Landsat extent: lon [{lon_min:.4f}, {lon_max:.4f}], lat [{lat_min:.4f}, {lat_max:.4f}]")
+    
+    # Create mask for valid data within Landsat extent
+    
+    valid_mask = np.isfinite(data) & (data > 0)
+    spatial_mask = (
+        (lon_shifted >= lon_min - buffer_deg) &
+        (lon_shifted <= lon_max + buffer_deg) &
+        (lat_vals >= lat_min - buffer_deg) &
+        (lat_vals <= lat_max + buffer_deg)
+    )
+    
+    combined_mask = valid_mask & spatial_mask
+    points_in_scene = np.sum(combined_mask)
+    # print(f"MODIS points within Landsat extent: {points_in_scene}")
+    
+    if points_in_scene < 10:
+        raise ValueError(
+            f"Too few MODIS points overlap Landsat scene: {points_in_scene}. "
+            f"Cannot interpolate reliably."
+        )
+    
+    # Create DataFrame with explicit float64 dtype
     df = pd.DataFrame({
-        'longitude': lon.values.flatten(), # Flatten to convert from 2D to 1D array
-        'latitude': lat.values.flatten(),
-        'water_vapor': data.flatten() # Actual data values to be interpolated
+        'longitude': lon_shifted[combined_mask].astype(np.float64),
+        'latitude': lat_vals[combined_mask].astype(np.float64),
+        'water_vapor': data[combined_mask].astype(np.float64)
     })
+    
+    # print(f"Valid MODIS data points for interpolation: {len(df)}")
+    print(f"Mean water vapor: {df.water_vapor.mean():.4f}")
+    
+    # Get data extent
+    lon_data_min = df.longitude.min()
+    lon_data_max = df.longitude.max()
+    lat_data_min = df.latitude.min()
+    lat_data_max = df.latitude.max()
+    
+    print(f"Data extent: lon [{lon_data_min:.4f}, {lon_data_max:.4f}], lat [{lat_data_min:.4f}, {lat_data_max:.4f}]")
+    
+    # Decide interpolation extent based on data density
+    # First, calculate a preliminary data density estimate
+    avg_lat_prelim = (lat_min + lat_max) / 2
+    spacing_lat_deg_prelim = target_spacing_m / 111000.0
+    spacing_lon_deg_prelim = target_spacing_m / (111000.0 * np.cos(np.radians(avg_lat_prelim)))
+    interp_buffer = buffer_deg  # degrees
+    
+    # Preliminary grid size using Landsat extent
+    lon_grid_min_prelim = lon_min - interp_buffer
+    lon_grid_max_prelim = lon_max + interp_buffer
+    lat_grid_min_prelim = lat_min - interp_buffer
+    lat_grid_max_prelim = lat_max + interp_buffer
+    
+    nx_prelim = int(np.round((lon_grid_max_prelim - lon_grid_min_prelim) / spacing_lon_deg_prelim))
+    ny_prelim = int(np.round((lat_grid_max_prelim - lat_grid_min_prelim) / spacing_lat_deg_prelim))
+    total_cells_prelim = nx_prelim * ny_prelim
+    data_density_prelim = total_cells_prelim / len(df)
+    
+    print(f"Preliminary data density: 1 MODIS point per {data_density_prelim:.1f} grid cells")
+    
+    # If data is too sparse, use actual data extent instead of Landsat extent
+    if data_density_prelim > 200:
+        print(f"⚠️  Sparse data detected! Using actual data extent to avoid extrapolation.")
+        # Use data extent with smaller buffer
+        interp_buffer = 0.5  # Smaller buffer for sparse data
+        lon_grid_min = lon_data_min - interp_buffer
+        lon_grid_max = lon_data_max + interp_buffer
+        lat_grid_min = lat_data_min - interp_buffer
+        lat_grid_max = lat_data_max + interp_buffer
+    else:
+        # Use Landsat extent for interpolation grid (with 2 degree buffer)
+        lon_grid_min = lon_min - interp_buffer
+        lon_grid_max = lon_max + interp_buffer
+        lat_grid_min = lat_min - interp_buffer
+        lat_grid_max = lat_max + interp_buffer
+    
+    print(f"Interpolation extent: lon [{lon_grid_min:.4f}, {lon_grid_max:.4f}], lat [{lat_grid_min:.4f}, {lat_grid_max:.4f}]")    
+    
+    avg_lat = (lat_grid_min + lat_grid_max) / 2
+    
+    # Convert spacing from meters to degrees
+    spacing_lat_deg = target_spacing_m / 111000.0
+    spacing_lon_deg = target_spacing_m / (111000.0 * np.cos(np.radians(avg_lat)))
+    
+    print(f"Target spacing: {target_spacing_m}m")
+    print(f"  → lon: {spacing_lon_deg:.8f}°")
+    print(f"  → lat: {spacing_lat_deg:.8f}°")
+    
+    # Calculate grid dimensions based on LANDSAT extent (not data extent)
+    nx = int(np.round((lon_grid_max - lon_grid_min) / spacing_lon_deg))
+    ny = int(np.round((lat_grid_max - lat_grid_min) / spacing_lat_deg))
+    nx = max(nx, 2)
+    ny = max(ny, 2)
+    
+    # Adjust max bounds to fit exactly
+    lon_grid_max_adj = lon_grid_min + nx * spacing_lon_deg
+    lat_grid_max_adj = lat_grid_min + ny * spacing_lat_deg
+    
+    region = [lon_grid_min, lon_grid_max_adj, lat_grid_min, lat_grid_max_adj]
+    
+    total_cells = nx * ny
+    data_density = total_cells / len(df)
 
-    # Remove missing or NaN values from DataFrame, as `surface` cannot handle them
-    df = df.dropna(subset=['water_vapor'])
+    # After calculating data_density:
+    print(f"Interpolation grid: {nx} x {ny} = {total_cells:,} cells")
+    print(f"Data density: 1 MODIS point per {data_density:.1f} grid cells")
+    
+    spacing_str = f"{spacing_lon_deg:.15f}/{spacing_lat_deg:.15f}"
+    
+    # Blockmedian preprocessing
+    print("Running blockmedian...")
+    df_blocked = pygmt.blockmedian(
+        data=df[['longitude', 'latitude', 'water_vapor']],
+        region=region,
+        spacing=spacing_str,
+    )
+    
+    points_reduced = len(df) - len(df_blocked)
+    # print(f"Blockmedian: {len(df)} → {len(df_blocked)} points ({points_reduced} duplicates removed)")
 
-    # Determine the geographical extent for the interpolation based on the provided data points.
-    # This is necessary to define the spatial domain over which PyGMT will perform interpolation.
-    # [xmin, xmax, ymin, ymax] - made this the full image
-    region = [df.longitude.min(), df.longitude.max(), df.latitude.min(), df.latitude.max()]
-    # Alternatively, if the region is predefined (e.g., from metadata), it can be set directly.
+    if len(df_blocked) < 10:
+        raise ValueError(f"Blockmedian left too few points: {len(df_blocked)}")
+    
+    # Surface interpolation
+    print("Running surface interpolation...")
+    grid = pygmt.surface(
+        data=df_blocked,
+        region=region,
+        spacing=spacing_str,
+        tension=0.95,
+    )
+    
+    print(f"✓ Interpolation complete. Output grid: {grid.shape}")
 
-    # Use PyGMT to interpolate the data. PyGMT requires a session context to manage memory and configuration
-    # settings efficiently during its operations.
-    with pygmt.clib.Session() as session:
-        # Perform grid-based surface interpolation.
-        # The `data` parameter takes longitude, latitude, and water vapor as a NumPy array.
-        # `region` specifies the geographical extent.
-        # `spacing` sets the resolution of the output grid, here 0.3 km for high resolution.
-        # `tension` controls the stiffness of the interpolating surface. A value of 0.25 gives a balance between
-        # fitting the data closely and producing a smooth surface.
-        grid = pygmt.surface(
-            data=df[['longitude', 'latitude', 'water_vapor']].to_numpy(),  # Input data as NumPy array
-            region=region,  
-            spacing=['0.15k','0.05k'],  # f'0.3k'
-            tension=0.95,  
-        )   
+    # Grid check:
+    print(f"Grid data range: {float(grid.values.min()):.6f} to {float(grid.values.max()):.6f}")
+    # print(f"Grid has NaN: {np.isnan(grid.values).sum()} / {grid.values.size} pixels")
+    # print(f"Grid valid pixels: {np.sum(~np.isnan(grid.values))}")
+    
+    # Rename coordinates
+    grid = grid.rename({'x': 'lon', 'y': 'lat'})
+
+    # # Shift lon back to -180/180 if crosses_idl
+    # if crosses_idl:
+    #     print("Shifting grid coordinates back to -180/180 range")
+    #     lon_coords = grid.lon.values.copy()
+    #     lon_coords[lon_coords > 180] -= 360
+    #     grid = grid.assign_coords({'lon': lon_coords})
+    #     print(f"Final lon range: {grid.lon.min().values:.2f} to {grid.lon.max().values:.2f}")
+
+    if crosses_idl:
+        lon_coords = grid.lon.values.copy()
+        grid_span = lon_coords.max() - lon_coords.min()
+        
+        # If grid spans more than 180°, something went wrong
+        if grid_span > 180:
+            print(f"WARNING: Grid spans {grid_span:.2f}°, likely wrapping issue")
+        
+        # For IDL-crossing scenes, keep in 0-360 to maintain continuity
+        if grid_span < 20:  # Typical Landsat scene is 5-15° wide
+            print(f"Grid spans {grid_span:.2f}° - keeping in 0-360 space for IDL continuity")
+            print(f"Grid lon range: {lon_coords.min():.2f} to {lon_coords.max():.2f}")
+            # Don't shift back - keep as-is
+        else:
+            print(f"Grid spans {grid_span:.2f}° - unexpected, keeping as-is")
+        
+        grid = grid.assign_coords({'lon': lon_coords})
+    else:
+        # For non-IDL scenes, coordinates are already in -180/180
+        print(f"Grid lon range: {grid.lon.min().values:.2f} to {grid.lon.max().values:.2f}")
     
     return grid
 
@@ -1926,33 +3192,110 @@ def MODISlookup(mod07,ls_scene,box,spacing,scene,interpgrid=None):
 
 ##########################           
 
-def MODISsstlookup (mod07,ls_scene,box,spacing):
+# def MODISsstlookup (mod07,ls_scene,box,spacing):
+#     '''
+#     Look up atmospheric consituents from MODIS product for each Landsat pixel
+#     # Modified from http://stackoverflow.com/questions/2922532/obtain-latitude-and-longitude-from-a-geotiff-file 
+#     # and Shane Grigsby
+
+#     Variables:    
+#     mod07 = xarray with MODIS data with crs 4326 assigned
+#     ls_scene =  Landsat xarray DataArray
+#     box = list with [left easting,right easting,top northing,bottom northing]
+#     spacing = desired pixel size for extraction, list of [east/west, north/south] 
+#           (recommend choosing a number that allows for fast calculations and even division by 30)
+
+#     Output:
+#     indiciesMOD = indicies used to project MODIS pixels to match Landsat pixels
+#     lines = number of lines in Landsat file/MODIS output shape
+#     samples = number of samples in Landsat file/MODIS output shape
+#     x1,y1 = x and y coordinates for grid
+    
+#     Differences from NLSST: lat/lon variables named differently in SST vs WV files, no interpolation,
+#     test_gridcoords does not use `scene`, don't need to output lat/lon because do not interpolate and make 
+#     new ones
+    
+#     '''
+#     test_threshold = 5 
+    
+#     lat, lon = mod07.lat, mod07.lon # Different for SST vs WV
+    
+#     # Test lat is in correct range
+#     if ~((lat <= 90) & (lat >= -90)).all():
+#         print('MODIS latitude not between -90 and 90')
+#     # Test lon is in correct range
+#     if ~((lon <= 180) & (lon >= -180)).all():
+#         print('MODIS longitude not between -180 and 180')
+
+#     # Get the existing coordinate system
+#     old_cs = ls_scene.rio.crs # 'epsg:3031'
+#     new_cs = mod07.rio.crs # 'epsg:4326'
+
+#     # Create a transform object to convert between coordinate systems
+#     inProj = Proj(init=old_cs)
+#     outProj = Proj(init=new_cs)
+
+#     # Parse coordinates and spacing to different variables
+#     west,east,north,south = box
+#     ewspace,nsspace = spacing
+
+#     # Setting up grid, x coord from here to here at this spacing, mesh grid makes 2D
+#     samples = len(np.r_[west:east+1:ewspace])
+#     lines = len(np.r_[north:south-1:nsspace])#ns space is -300, could also do 30 instead of 300, but would just have duplicate pixels
+#     if lines==0:
+#         lines = len(np.r_[south:north-1:nsspace])
+        
+#     # x1, y1 = np.meshgrid(np.r_[west:east:ewspace],np.r_[north:south:nsspace]) # offset by 1 meter to preserve shape
+#     ewdnsamp = int(spacing[0]/30)
+#     nsdnsamp = int(spacing[1]/30)
+
+#     # Set up coarser sampling and check to make sure is in the same orientation as the original Landsat grid
+#     xresamp = ls_scene.x.isel(x=slice(None, None, ewdnsamp)).values
+#     if xresamp[0]!=ls_scene.x.values[0]:
+#         xresamp = ls_scene.x.isel(x=slice(None, None, -ewdnsamp)).values
+        
+#     yresamp = ls_scene.y.isel(y=slice(None, None, nsdnsamp)).values
+#     if yresamp[0]!=ls_scene.y.values[0]:
+#         yresamp = ls_scene.y.isel(y=slice(None, None, -nsdnsamp)).values
+
+#     x1, y1 = np.meshgrid(xresamp,yresamp)
+#     LScoords = np.vstack([x1.ravel(),y1.ravel()]).T
+#     if (LScoords[0,0]!=ls_scene.x.values[0]) |  (LScoords[0,1]!=ls_scene.y.values[0]):
+#         raise Exception('Landsat coordinates do not match expected during MODIS lookup')
+
+#     # Ravel so ND can lookup easily
+#     # Convert from LS map coords to lat lon --> x = lon, y = lat (usually?)
+#     # Test that reprojection is working correctly on first and last grid point using round-trip transformation
+#     xs1, ys1 =  transform(inProj,outProj,LScoords[0,0], LScoords[0,1], radians=True, always_xy=True)
+#     xsl1, ysl1 =  transform(outProj,inProj,xs1, ys1, radians=True, always_xy=True)
+#     if np.linalg.norm(np.array([xsl1, ysl1]) - LScoords[0,:]) > test_threshold:
+#         print(f"Round-trip transformation error for point {LScoords[0,:]}, {np.linalg.norm(np.array([xsl1, ysl1]) - LScoords[0,:])}")
+#     else:
+#         # If passes, run on entire grid
+#         xs, ys =  transform(inProj,outProj,LScoords[:,0], LScoords[:,1], radians=True, always_xy=True)
+
+#     # Produce landsat reprojected to lat/lon and ensure lat is in 0 column
+#     grid_coords = test_gridcoords_calib(xs, ys)
+    
+#     # Test that lines and samples match grid_coords
+#     if len(grid_coords) != lines*samples:
+#         raise Exception(f'Size of grid coordinates do not match low resolution Landsat dims: {len(grid_coords)} vs. {lines*samples}. Check that spacing is negative for y')
+#     MODIS_coords = np.vstack([lat.values.ravel(),lon.values.ravel()]).T
+#     MODIS_coords *= np.pi / 180. # to radians
+    
+#     # Build lookup, haversine = calc dist between lat,lon pairs so can do nearest neighbor on sphere - if did utm it would be planar
+#     MOD_Ball = BallTree(MODIS_coords,metric='haversine') #sklearn library
+#     distanceMOD, indiciesMOD= MOD_Ball.query(grid_coords, dualtree=True, breadth_first=True)
+        
+#     return indiciesMOD,lines,samples
+
+def MODISsstlookup(mod07, ls_scene, box, spacing):
     '''
     Look up atmospheric consituents from MODIS product for each Landsat pixel
-    # Modified from http://stackoverflow.com/questions/2922532/obtain-latitude-and-longitude-from-a-geotiff-file 
-    # and Shane Grigsby
-
-    Variables:    
-    mod07 = xarray with MODIS data with crs 4326 assigned
-    ls_scene =  Landsat xarray DataArray
-    box = list with [left easting,right easting,top northing,bottom northing]
-    spacing = desired pixel size for extraction, list of [east/west, north/south] 
-          (recommend choosing a number that allows for fast calculations and even division by 30)
-
-    Output:
-    indiciesMOD = indicies used to project MODIS pixels to match Landsat pixels
-    lines = number of lines in Landsat file/MODIS output shape
-    samples = number of samples in Landsat file/MODIS output shape
-    x1,y1 = x and y coordinates for grid
-    
-    Differences from NLSST: lat/lon variables named differently in SST vs WV files, no interpolation,
-    test_gridcoords does not use `scene`, don't need to output lat/lon because do not interpolate and make 
-    new ones
-    
     '''
     test_threshold = 5 
     
-    lat, lon = mod07.lat, mod07.lon # Different for SST vs WV
+    lat, lon = mod07.lat, mod07.lon
     
     # Test lat is in correct range
     if ~((lat <= 90) & (lat >= -90)).all():
@@ -1962,65 +3305,91 @@ def MODISsstlookup (mod07,ls_scene,box,spacing):
         print('MODIS longitude not between -180 and 180')
 
     # Get the existing coordinate system
-    old_cs = ls_scene.rio.crs # 'epsg:3031'
-    new_cs = mod07.rio.crs # 'epsg:4326'
+    old_cs = ls_scene.rio.crs
+    new_cs = mod07.rio.crs
 
     # Create a transform object to convert between coordinate systems
     inProj = Proj(init=old_cs)
     outProj = Proj(init=new_cs)
 
-    # Parse coordinates and spacing to different variables
-    west,east,north,south = box
-    ewspace,nsspace = spacing
+    # Parse coordinates and spacing
+    west, east, north, south = box
+    ewspace, nsspace = spacing
 
-    # Setting up grid, x coord from here to here at this spacing, mesh grid makes 2D
+    # Setting up grid
     samples = len(np.r_[west:east+1:ewspace])
-    lines = len(np.r_[north:south-1:nsspace])#ns space is -300, could also do 30 instead of 300, but would just have duplicate pixels
-    if lines==0:
+    lines = len(np.r_[north:south-1:nsspace])
+    if lines == 0:
         lines = len(np.r_[south:north-1:nsspace])
         
-    # x1, y1 = np.meshgrid(np.r_[west:east:ewspace],np.r_[north:south:nsspace]) # offset by 1 meter to preserve shape
     ewdnsamp = int(spacing[0]/30)
     nsdnsamp = int(spacing[1]/30)
 
-    # Set up coarser sampling and check to make sure is in the same orientation as the original Landsat grid
+    # Set up coarser sampling
     xresamp = ls_scene.x.isel(x=slice(None, None, ewdnsamp)).values
-    if xresamp[0]!=ls_scene.x.values[0]:
+    if xresamp[0] != ls_scene.x.values[0]:
         xresamp = ls_scene.x.isel(x=slice(None, None, -ewdnsamp)).values
         
     yresamp = ls_scene.y.isel(y=slice(None, None, nsdnsamp)).values
-    if yresamp[0]!=ls_scene.y.values[0]:
+    if yresamp[0] != ls_scene.y.values[0]:
         yresamp = ls_scene.y.isel(y=slice(None, None, -nsdnsamp)).values
 
-    x1, y1 = np.meshgrid(xresamp,yresamp)
-    LScoords = np.vstack([x1.ravel(),y1.ravel()]).T
-    if (LScoords[0,0]!=ls_scene.x.values[0]) |  (LScoords[0,1]!=ls_scene.y.values[0]):
+    x1, y1 = np.meshgrid(xresamp, yresamp)
+    LScoords = np.vstack([x1.ravel(), y1.ravel()]).T
+    if (LScoords[0,0] != ls_scene.x.values[0]) | (LScoords[0,1] != ls_scene.y.values[0]):
         raise Exception('Landsat coordinates do not match expected during MODIS lookup')
 
-    # Ravel so ND can lookup easily
-    # Convert from LS map coords to lat lon --> x = lon, y = lat (usually?)
-    # Test that reprojection is working correctly on first and last grid point using round-trip transformation
-    xs1, ys1 =  transform(inProj,outProj,LScoords[0,0], LScoords[0,1], radians=True, always_xy=True)
-    xsl1, ysl1 =  transform(outProj,inProj,xs1, ys1, radians=True, always_xy=True)
+    # Test round-trip transformation
+    xs1, ys1 = transform(inProj, outProj, LScoords[0,0], LScoords[0,1], radians=True, always_xy=True)
+    xsl1, ysl1 = transform(outProj, inProj, xs1, ys1, radians=True, always_xy=True)
     if np.linalg.norm(np.array([xsl1, ysl1]) - LScoords[0,:]) > test_threshold:
         print(f"Round-trip transformation error for point {LScoords[0,:]}, {np.linalg.norm(np.array([xsl1, ysl1]) - LScoords[0,:])}")
     else:
-        # If passes, run on entire grid
-        xs, ys =  transform(inProj,outProj,LScoords[:,0], LScoords[:,1], radians=True, always_xy=True)
+        xs, ys = transform(inProj, outProj, LScoords[:,0], LScoords[:,1], radians=True, always_xy=True)
+    
+    # Convert back to degrees to see what you actually got
+    xs_deg = xs * 180 / np.pi
+    ys_deg = ys * 180 / np.pi
+    print(f"Transformed coords in degrees:")
+    print(f"  xs_deg: {xs_deg.min():.2f} to {xs_deg.max():.2f}")
+    print(f"  ys_deg: {ys_deg.min():.2f} to {ys_deg.max():.2f}")
 
     # Produce landsat reprojected to lat/lon and ensure lat is in 0 column
-    grid_coords = np.vstack([ys.ravel(),xs.ravel()]).T
+    grid_coords = test_gridcoords_calib(xs, ys)
+    
     # Test that lines and samples match grid_coords
     if len(grid_coords) != lines*samples:
-        raise Exception(f'Size of grid coordinates do not match low resolution Landsat dims: {len(grid_coords)} vs. {lines*samples}. Check that spacing is negative for y')
-    MODIS_coords = np.vstack([lat.values.ravel(),lon.values.ravel()]).T
-    MODIS_coords *= np.pi / 180. # to radians
+        raise Exception(f'Size of grid coordinates do not match low resolution Landsat dims: {len(grid_coords)} vs. {lines*samples}')
     
-    # Build lookup, haversine = calc dist between lat,lon pairs so can do nearest neighbor on sphere - if did utm it would be planar
-    MOD_Ball = BallTree(MODIS_coords,metric='haversine') #sklearn library
-    distanceMOD, indiciesMOD= MOD_Ball.query(grid_coords, dualtree=True, breadth_first=True)
-        
-    return indiciesMOD,lines,samples
+    # Filter out nan coordinates before building balltree
+    lat_vals = lat.values.ravel()
+    lon_vals = lon.values.ravel()
+    
+    # Create valid mask
+    valid_mask = np.isfinite(lat_vals) & np.isfinite(lon_vals)
+    
+    # Filter to valid coordinates only
+    lat_valid = lat_vals[valid_mask]
+    lon_valid = lon_vals[valid_mask]
+    
+    if len(lat_valid) == 0:
+        raise ValueError("No valid MODIS SST coordinates found")
+    
+    MODIS_coords = np.vstack([lat_valid, lon_valid]).T
+    MODIS_coords *= np.pi / 180.
+    
+    # Build lookup
+    MOD_Ball = BallTree(MODIS_coords, metric='haversine')
+    distanceMOD, indiciesMOD_valid = MOD_Ball.query(grid_coords, dualtree=True, breadth_first=True)
+    
+    # Map back to original indices (accounting for NaN filtering)
+    # Get original indices of valid points
+    valid_indices = np.where(valid_mask)[0]
+    
+    # Map the BallTree indices back to original array indices
+    indiciesMOD = valid_indices[indiciesMOD_valid]
+    
+    return indiciesMOD, lines, samples
 
 ##########################
 
@@ -2156,7 +3525,7 @@ def alignMODIS(data,lat,lon,param,indiciesMOD,lines,samples,mod07,ls_scene,spaci
     xsl1, ysl1 = transformer_test.transform(xs1, ys1)
     for i,n in enumerate(xsl1):
         if np.linalg.norm(np.array([xsl1[i], ysl1[i]]) - [xx[i],yy[i]]) > test_threshold:
-            print(f"Round-trip transformation error for {sceneid}, {np.linalg.norm(np.array([xsl1[i], ysl1[i]]) - xx[i],yy[i])}")
+            print(f"Round-trip transformation error for this scene, {np.linalg.norm(np.array([xsl1[i], ysl1[i]]) - xx[i],yy[i])}")
     
     # Spacing to create x and y parameters at the correct spacing
     redy = int(abs(spacing[0]/30))
@@ -2303,12 +3672,35 @@ def prep_retrieval(atmpath,prefix,spec_hu_file):
     else:
         mfile = modtr_list[0]
         modtran_lut = pd.read_csv(f'{atmpath}/{mfile}', sep=' ',header=None,names=lut_cols)
+
+    # Remove last row only if it duplicates the second-to-last row
+    print(f"MODTRAN LUT before cleaning: {modtran_lut.shape[0]} rows")
+    
+    if modtran_lut.shape[0] >= 2 and modtran_lut.iloc[-1].equals(modtran_lut.iloc[-2]):
+        modtran_lut = modtran_lut.iloc[:-1].reset_index(drop=True)
+        print(f"  Removed duplicate last row")
+    
+    print(f"MODTRAN LUT after cleaning: {modtran_lut.shape[0]} rows")
     
     modtran_lut['TCWV [cm]'] = np.nan
     
     # Open atm profiles for input of water vapor specific humidity
     atm_cols = ['Altitude [km]', 'pressure [hPa]', 'temp [K]', 'spec humidity [kg/kg]']
     modtran_atm = pd.read_csv(f'{atmpath}/{spec_hu_file}', sep='\t',header=None,names=atm_cols)
+
+    # Ensure profiles match outputs
+    expected_profiles = modtran_atm.shape[0] // 37
+    actual_profiles = modtran_lut.shape[0]
+    
+    if expected_profiles != actual_profiles:
+        print(f"⚠️  WARNING: Mismatch between profiles and outputs!")
+        print(f"   Atmospheric profiles: {modtran_atm.shape[0]} rows = {expected_profiles} profiles")
+        print(f"   MODTRAN outputs: {actual_profiles} rows")
+        
+        # Trim atmospheric data to match
+        if expected_profiles > actual_profiles:
+            modtran_atm = modtran_atm.iloc[:actual_profiles * 37]
+            print(f"   Trimmed atm profiles to {modtran_atm.shape[0]} rows")
     
     # Run integral to get tcwv
     modtran_lut = spec_hu_to_tcwv(modtran_lut,modtran_atm)
@@ -2338,8 +3730,9 @@ def concat_modtran_months(months,atmpath):
             modtran = prep_retrieval(atmpath, modtran_output_file, spec_hu_file)
             modtran.to_csv(TCWV_input_file, index=False)
         
-        # Remove rows with Surface T values of 271.46 and 271.461.
-        modtran = modtran[~modtran['Surface T[K]'].isin([271.46, 271.461])]
+        # QC: Remove all ERA-5 atm profiles associated with sea ice (SST <- 1.688 C)
+        modtran = modtran[modtran['Surface T[K]'] >= (-1.688 + 273.15)]
+
         print(f'{mo}: {modtran.shape[0]}')
         
         modtran_list.append(modtran)
@@ -2565,7 +3958,7 @@ def spec_hu_to_tcwv(modtran_lut, modtran_atm, atm_levels=37):
     g = 9.80665  # gravity [m/s^2]
 
     m = 0
-    for y in tqdm(range(modtran_lut.shape[0]-1)):
+    for y in tqdm(range(modtran_lut.shape[0])):
         r = m + atm_levels
         df = modtran_atm.iloc[m:r]
 
