@@ -1,1 +1,1 @@
-DateTime,L8_filename,L8_SST,L8_std,center,N,S,E,W,NE,SE,NW,SW,L8_SST_max,L8_SST_min,Argo_id,Argo_SST,A_lat,A_lon
+,DateTime,L8_filename,L8_SST,L8_std,center,L8_SST_max,L8_SST_min,Argo_id,Argo_SST,depth,platform_type,A_lat,A_lon,time_dif
